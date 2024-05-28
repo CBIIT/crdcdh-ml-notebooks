@@ -1,2 +1,2 @@
 # crdcdh-ml-notebooks
-CRDC datahub machine learcing notebooks repository
+CRDC Datahub Machine Learning Notebooks Repository
