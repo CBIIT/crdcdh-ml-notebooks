@@ -1,11 +1,9 @@
 numpy
 pandas
 matplotlib
-folium
-xlrd
-seaborn
-cloudant
-statsmodels
-jupyter_dashboards==0.1.0
-jupyter_declarativewidgets==0.1.0
-jupyter_cms==0.1.2
+boto3
+jupyter
+sagemaker 
+ipywidgets 
+datasets 
+seqeval

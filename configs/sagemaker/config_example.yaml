@@ -1,0 +1,30 @@
+SchemaVersion: '1.0'
+SageMaker:
+  PythonSDK:
+    Modules:
+      RemoteFunction:
+        Dependencies: 'path/to/requirements.txt'
+        EnableInterContainerTrafficEncryption: true
+        EnvironmentVariables: {'EnvVarKey': 'EnvVarValue'}
+        ImageUri: '366666666666.dkr.ecr.us-west-2.amazonaws.com/my-image:latest'
+        IncludeLocalWorkDir: true
+        CustomFileFilter: 
+          IgnoreNamePatterns:
+          - "*.ipynb"
+          - "data"
+        InstanceType: 'ml.t3.medium'
+        JobCondaEnvironment: 'your_conda_env'
+        PreExecutionCommands:
+            - 'command_1'
+            - 'command_2'
+        PreExecutionScript: 'path/to/script.sh'
+        RoleArn: 'arn:aws:iam:::role/service-role/AmazonSageMaker-ExecutionRole'
+        S3KmsKeyId: 'yourkmskeyid'
+        S3RootUri: 's3://crdcdh-test-submission/ml-data'
+        VpcConfig:
+            SecurityGroupIds: 
+            - 'sg123'
+            Subnets: 
+            - 'subnet-1234'
+        Tags: [{'Key': 'yourTagKey', 'Value':'yourTagValue'}]
+        VolumeKmsKeyId: 'yourkmskeyid'
