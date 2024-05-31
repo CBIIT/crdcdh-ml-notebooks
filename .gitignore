@@ -136,4 +136,11 @@ ui-tests/playwright-report
 ui-tests/.yarn/*
 ui-tests/.pnp.*
 
+# sample notebooks
+*sample*
+
+# jupyter desktop 
+*workspace*
+*config.yaml
+
 
