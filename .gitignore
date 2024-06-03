@@ -145,5 +145,6 @@ ui-tests/.pnp.*
 data/*
 images/*
 output/*
+src/common/sagemaker_config.py
 
 
