@@ -36,7 +36,7 @@ def delete_endpoint(endpoint_name):
     except ClientError as ce:
         print(ce)
     finally:
-        if not sagemaker_client:
+        if sagemaker_client:
             sagemaker_client.close()
             sagemaker_client = None
     
