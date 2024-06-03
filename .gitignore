@@ -137,7 +137,7 @@ ui-tests/.yarn/*
 ui-tests/.pnp.*
 
 # sample notebooks
-*sample*
+sample*
 
 # jupyter desktop 
 *workspace*
