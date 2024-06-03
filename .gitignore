@@ -142,5 +142,8 @@ ui-tests/.pnp.*
 # jupyter desktop 
 *workspace*
 *config.yaml
+data/*
+images/*
+output/*
 
 
