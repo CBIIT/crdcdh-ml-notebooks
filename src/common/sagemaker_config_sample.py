@@ -27,9 +27,11 @@ SOURCE_S3_PATH = f"s3://{SOURCE_S3_BUCKET}/{SOURCE_S3_PREFIX}"
 
 SOLUTION_PREFIX = "crdcdh-ml"
 
+# training and hosting instance type
 TRAINING_INSTANCE_TYPE = "ml.c4.xlarge"
 HOSTING_INSTANCE_TYPE = "ml.t3.medium"
 
 TAG_KEY = "crdcdh-ml-dev"
 # execute-role for sagemaker
 SAGEMAKER_EXECUTE_ROLE = ""
+
