@@ -2,14 +2,14 @@ import os
 from sagemaker.session import Session
 from sagemaker.config import load_sagemaker_config, validate_sagemaker_config
 from sagemaker.local import LocalSession
-import common.config as config
+import common.sagemaker_config_sample as sagemaker_config_sample
 
 def get_sagemaker_session(is_Local = False):
     if not is_Local: 
         # Create a configuration dictionary manually
         custom_sagemaker_config = load_sagemaker_config(
             additional_config_paths=[
-                os.path.join(config.ROOT_DIR, "configs/sagemaker/config.yaml")
+                os.path.join(sagemaker_config_sample.ROOT_DIR, "configs/sagemaker/config.yaml")
             ]
         )
         # Then validate that the dictionary adheres to the configuration schema
