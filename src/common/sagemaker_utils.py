@@ -93,3 +93,12 @@ def normalize_word_vector(word_vector_path, num_points = 400):
                 break
     word_vecs = normalize(word_vecs, copy=False, return_norm=False)
     return word_vecs, index_to_word 
+
+def create_local_output_dirs(output_dirs):
+    """
+    Create local output dirs
+    @param output_dirs: output dir list
+    """
+    for output_dir in output_dirs:
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
