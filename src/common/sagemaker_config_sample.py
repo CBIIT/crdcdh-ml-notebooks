@@ -32,6 +32,6 @@ TRAINING_INSTANCE_TYPE = "ml.c4.xlarge"
 HOSTING_INSTANCE_TYPE = "ml.t3.medium"
 
 TAG_KEY = "crdcdh-ml-dev"
-# execute-role for sagemaker
-SAGEMAKER_EXECUTE_ROLE = ""
+# execute-role for sagemaker, only needed for local development
+# SAGEMAKER_EXECUTE_ROLE = ""
 
