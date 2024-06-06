@@ -67,32 +67,7 @@ def get_sagemaker_execute_role(sagemaker_session):
             print('No SageMaker execute role is configured.')
             raise e
         
-def normalize_word_vector(word_vector_path, num_points = 400):
-    """
-    Normalize word vector
-    @param word_vector_path: word vector path
-    @param num_points: Read the 400 most frequent word vectors by default. The vectors in the file are in descending order of frequency.
-    @return: word vector
-    """
-    first_line = True
-    index_to_word = []
-    with open(word_vector_path, "r") as f:
-        for line_num, line in enumerate(f):
-            if first_line:
-                dim = int(line.strip().split()[1])
-                word_vecs = np.zeros((num_points, dim), dtype=float)
-                first_line = False
-                continue
-            line = line.strip()
-            word = line.split()[0]
-            vec = word_vecs[line_num - 1]
-            for index, vec_val in enumerate(line.split()[1:]):
-                vec[index] = float(vec_val)
-            index_to_word.append(word)
-            if line_num >= num_points:
-                break
-    word_vecs = normalize(word_vecs, copy=False, return_norm=False)
-    return word_vecs, index_to_word 
+
 
 def create_local_output_dirs(output_dirs):
     """
