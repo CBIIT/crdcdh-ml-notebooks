@@ -12,12 +12,13 @@ class SemanticAnalysis:
         """
         constructor of SemanticAnalysis
         """
-        create_local_output_dirs(["../output", "../output/model", "../data", "../images"]) # create local directories if not exist.
+        create_local_output_dirs(["../output", "../output/model", "../data", "../temp"]) # create local directories if not exist.
+        self.endpoint_name = None
         self.timestamp = get_data_time()
         self.data_time = get_data_time("%Y-%m-%d-%H-%M-%S")
         self.session = get_sagemaker_session()
         self.role = get_sagemaker_execute_role(self.session)
-        print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
+        # print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
         self.region_name = boto3.Session().region_name
         self.output_bucket = config.CRDCDH_S3_BUCKET
         self.raw_data_prefix = config.RAW_DATA_PREFIX
@@ -30,11 +31,11 @@ class SemanticAnalysis:
         self.s3_train_data = None
         self.bt_model = None
         self.data_channels = None
-        
-        self.s3_client = boto3.client("s3")
         self.bt_endpoint = None
+
+        self.s3_client = boto3.client("s3")
         
-    def set_container(self, image_name, version):
+    def set_container(self, image_name=None, version=None):
         """
         download the container image from ECR
         """
@@ -42,9 +43,12 @@ class SemanticAnalysis:
             image_name = config.CONTAINER_IMAGE_NAME
         if version is None:
             version = config.CONTAINER_IMAGE_VERSION
-        self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version)
-        print(f"Using SageMaker BlazingText container: {self.container} ({self.region_name})")
-
+        try:   
+            self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version)
+            print(f"Using SageMaker BlazingText container: {self.container} ({self.region_name})")
+        except Exception as e:
+            print("Failed to download container, please contact admin.")
+            self.close()
     def prepare_train_data(self, raw_data_s3_folder):
         """
         download the raw data from s3 and transform it to training data, then upload the training data to s3
@@ -54,8 +58,8 @@ class SemanticAnalysis:
         try:
             self.s3_client.upload_file(local_path, self.output_bucket, train_data_key)
         except Exception as e:
-            print(e)
-            self.close(config.ENDPOINT_NAME)
+            print("Failed to prepare training data, please contact admin.")
+            self.close()
 
         self.s3_train_data = f"s3://{self.output_bucket}/{train_data_key}"
         train_data = sagemaker.session.s3_input(
@@ -98,8 +102,8 @@ class SemanticAnalysis:
         try:
             self.bt_model.fit(inputs=self.data_channels, logs=True)
         except Exception as e:
-            print(e)
-            self.close(config.ENDPOINT_NAME)
+            print("Failed to train model, please contact admin.")
+            self.close()
 
     def download_trained_model(self, local_model_file="../output/model.tar.gz"):
         """
@@ -110,8 +114,8 @@ class SemanticAnalysis:
             key = self.bt_model.model_data[self.bt_model.model_data.find("/", 5) + 1 :]
             self.s3_resource.Bucket(self.output_bucket).download_file(key, local_model_file)
         except Exception as e:
-            print(e)
-            self.close(config.ENDPOINT_NAME)
+            print("Failed to download trained model, please contact admin.")
+            self.close()
 
     def evaluate_learned_model_vacs(self, local_model_file = "../output/model.tar.gz", to_local_path="../output/model"):
         """
@@ -120,30 +124,29 @@ class SemanticAnalysis:
         try:
             untar_file(local_model_file, to_local_path)
             pretty_print_json(to_local_path + "/eval.json")
-            output_image_path = str.replace(to_local_path, "output/model", "images") + "/model_vecs_" + self.data_time + ".png"
+            output_image_path = str.replace(to_local_path, "output/model", "temp") + "/model_vecs_" + self.data_time + ".png"
             plot_word_vecs_tsne(to_local_path + "/vectors.txt", None, output_image_path)
         except Exception as e:
-            print(e)
-            self.close(config.ENDPOINT_NAME)
+            print("Failed to evaluate learned model vectors, please contact admin.")
+            self.close()
 
     def deploy_trained_model(self, endpoint_name):
         """
         deploy trained model to sagemaker endpoint
         """
         try:
-            if endpoint_name is None:
-                endpoint_name = config.ENDPOINT_NAME
-            self.endpoint_name = endpoint_name
+            
+            self.endpoint_name = config.ENDPOINT_NAME if endpoint_name is None else endpoint_name
             self.bt_endpoint = self.bt_model.deploy(
                 initial_instance_count=1,
                 instance_type=config.HOSTING_INSTANCE_TYPE,
                 endpoint_name=endpoint_name,
             )
         except Exception as e:
-            print(e)
-            self.close(endpoint_name)
+            print("Failed to deploy model vectors, please contact admin.")
+            self.close()
 
-    def evaluate_trained_model(self, word_list, to_local_path):
+    def test_trained_model(self, word_list):
         """
         evaluate trained model with word list
         """
@@ -155,16 +158,18 @@ class SemanticAnalysis:
             )
             vecs = json.loads(response)
             print(vecs[:1])
-            plot_word_vecs_tsne(None, vecs, str.replace(to_local_path, "output", "images)") + "/model_vecs_test_" + self.data_time + ".png")
+            output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
+            plot_word_vecs_tsne(None, vecs, output_image_path)
         except Exception as e:
             print(e)
             self.close(self.endpoint_name )
 
-    def close(self, endpoint_name):
+    def close(self, endpoint_name=None):
         """
         delete endpoint and close s3_client, s3_resource, session
         """
-        delete_endpoint(endpoint_name)
+        if endpoint_name:
+            delete_endpoint(endpoint_name)
         if self.bt_model:
             self.bt_model = None
         if self.s3_client:
