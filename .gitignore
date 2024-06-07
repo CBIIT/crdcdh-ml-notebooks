@@ -143,8 +143,8 @@ sample*
 *workspace*
 *config.yaml
 data/*
-images/*
 output/*
 src/common/sagemaker_config.py
+temp
 
 
