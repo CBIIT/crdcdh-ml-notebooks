@@ -6,8 +6,7 @@ from sagemaker.local import LocalSession
 from sagemaker import get_execution_role
 from botocore.exceptions import ClientError
 import numpy as np
-from sklearn.preprocessing import normalize
-import common.sagemaker_config as sagemaker_config
+import common.sagemaker_config as config
 
 def get_sagemaker_session(is_Local = False):
     """
@@ -16,19 +15,21 @@ def get_sagemaker_session(is_Local = False):
     @return: sagemaker session
     """
     if not is_Local: 
-        # Create a configuration dictionary manually
-        custom_sagemaker_config = load_sagemaker_config(
-            additional_config_paths=[
-                os.path.join(sagemaker_config.ROOT_DIR, "configs/sagemaker/config.yaml")
-            ]
-        )
-        # Then validate that the dictionary adheres to the configuration schema
-        validate_sagemaker_config(custom_sagemaker_config)
-
-        # Then initialize the Session object with the configuration dictionary
-        return Session(
-            sagemaker_config = custom_sagemaker_config
-        )
+        if config.TIER == "loc":
+            # Create a configuration dictionary manually
+            custom_sagemaker_config = load_sagemaker_config(
+                additional_config_paths=[
+                    os.path.join(config.ROOT_DIR, "configs/sagemaker/config.yaml")
+                ]
+            )
+            # Then validate that the dictionary adheres to the configuration schema
+            validate_sagemaker_config(custom_sagemaker_config)
+            # Then initialize the Session object with the configuration dictionary
+            return Session(
+                sagemaker_config = custom_sagemaker_config
+            )
+        else:
+            return Session()
     
     else:
         sagemaker_session = LocalSession()
@@ -58,41 +59,12 @@ def get_sagemaker_execute_role(sagemaker_session):
     @param sagemaker_session: sagemaker session
     @return: sagemaker execute role
     """
-    try:
+    if config.TIER == "loc":
+        return config.SAGEMAKER_EXECUTE_ROLE
+    else:
         return get_execution_role(sagemaker_session)
-    except Exception as e:
-        if sagemaker_config.SAGEMAKER_EXECUTE_ROLE:
-            return sagemaker_config.SAGEMAKER_EXECUTE_ROLE
-        else:
-            print('No SageMaker execute role is configured.')
-            raise e
         
-def normalize_word_vector(word_vector_path, num_points = 400):
-    """
-    Normalize word vector
-    @param word_vector_path: word vector path
-    @param num_points: Read the 400 most frequent word vectors by default. The vectors in the file are in descending order of frequency.
-    @return: word vector
-    """
-    first_line = True
-    index_to_word = []
-    with open(word_vector_path, "r") as f:
-        for line_num, line in enumerate(f):
-            if first_line:
-                dim = int(line.strip().split()[1])
-                word_vecs = np.zeros((num_points, dim), dtype=float)
-                first_line = False
-                continue
-            line = line.strip()
-            word = line.split()[0]
-            vec = word_vecs[line_num - 1]
-            for index, vec_val in enumerate(line.split()[1:]):
-                vec[index] = float(vec_val)
-            index_to_word.append(word)
-            if line_num >= num_points:
-                break
-    word_vecs = normalize(word_vecs, copy=False, return_norm=False)
-    return word_vecs, index_to_word 
+
 
 def create_local_output_dirs(output_dirs):
     """

@@ -17,21 +17,22 @@ current_folder = get_current_folder(globals())
 print("src dir:" + str(current_folder))
 ROOT_DIR = current_folder.parent.resolve()
 print("root dir:" + str(ROOT_DIR)) 
-DATASETS_S3_PREFIX = "datasets"
-OUTPUTS_S3_PREFIX = "outputs"
+TIER = "dev"  # tier value in [loc, dev, qa, stage, prod]
+CONTAINER_IMAGE_NAME = "blazingtext"
+CONTAINER_IMAGE_VERSION = "latest"
 
-# model source s3 configurations
-SOURCE_S3_PREFIX = ""
-SOURCE_S3_BUCKET = ""
-SOURCE_S3_PATH = f"s3://{SOURCE_S3_BUCKET}/{SOURCE_S3_PREFIX}"
+CRDCDH_S3_BUCKET = "crdcdh-ml-" + TIER
+TRAIN_DATA_PREFIX = "data/train/" + CONTAINER_IMAGE_NAME + "-"
+TEST_DATA_PREFIX = "data/test/" + CONTAINER_IMAGE_NAME + "-"
+RAW_DATA_PREFIX = "data/raw/json/"
+TRAIN_OUTPUTS_PREFIX = "train_output/"
+
+TRAINING_INSTANCE_TYPE = "ml.c4.xlarge"
+HOSTING_INSTANCE_TYPE = "ml.m4.xlarge"
 
 SOLUTION_PREFIX = "crdcdh-ml"
+TAG_KEY = SOLUTION_PREFIX + "-" + TIER
+ENDPOINT_NAME = TAG_KEY + "-endpoint"
 
-# training and hosting instance type
-TRAINING_INSTANCE_TYPE = "ml.c4.xlarge"
-HOSTING_INSTANCE_TYPE = "ml.t3.medium"
-
-TAG_KEY = "crdcdh-ml-dev"
-# execute-role for sagemaker, only needed for local development
-# SAGEMAKER_EXECUTE_ROLE = ""
-
+# execute-role for sagemaker in FNL for local development only
+SAGEMAKER_EXECUTE_ROLE = ""
