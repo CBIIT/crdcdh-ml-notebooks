@@ -2,6 +2,10 @@ import os
 import sagemaker
 import boto3
 import json
+
+import sagemaker.deserializers
+import sagemaker.serializers
+from bento.common.s3 import S3Bucket
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
 import common.sagemaker_config as config
 from common.utils import untar_file, pretty_print_json, get_data_time
@@ -14,6 +18,7 @@ class SemanticAnalysis:
         """
         create_local_output_dirs(["../output", "../output/model", "../data", "../temp"]) # create local directories if not exist.
         self.endpoint_name = None
+        self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET)
         self.timestamp = get_data_time()
         self.data_time = get_data_time("%Y-%m-%d-%H-%M-%S")
         self.session = get_sagemaker_session()
@@ -33,7 +38,11 @@ class SemanticAnalysis:
         self.data_channels = None
         self.bt_endpoint = None
 
-        self.s3_client = boto3.client("s3")
+    def get_s3_bucket(self):
+        """
+        get s3 bucket
+        """
+        return self.S3Bucket
         
     def set_container(self, image_name=None, version=None):
         """
@@ -49,19 +58,16 @@ class SemanticAnalysis:
         except Exception as e:
             print("Failed to download container, please contact admin.")
             self.close()
-    def prepare_train_data(self, raw_data_s3_folder):
-        """
-        download the raw data from s3 and transform it to training data, then upload the training data to s3
-        """
-        local_path = "../data/text8" # call data transformation API to generate training data and get the local_path
-        train_data_key = os.path.join(self.train_data_prefix, "train_text8_data")
-        try:
-            self.s3_client.upload_file(local_path, self.output_bucket, train_data_key)
-        except Exception as e:
-            print("Failed to prepare training data, please contact admin.")
-            self.close()
 
-        self.s3_train_data = f"s3://{self.output_bucket}/{train_data_key}"
+    def transformData(self, raw_data_folder, text8_file_path):
+        """
+        transform the raw data in json format to training data in text8
+        """
+        return "data/train/blazingtext-2024-06-12-11-15-48-f/train_data"
+
+    def prepare_train_data(self, text8_file_s3_key):
+
+        self.s3_train_data = f"s3://{self.output_bucket}/{text8_file_s3_key}"
         train_data = sagemaker.session.s3_input(
             self.s3_train_data,
             distribution="FullyReplicated",
@@ -87,7 +93,7 @@ class SemanticAnalysis:
         )
         
         self.bt_model.set_hyperparameters(
-            mode="batch_skipgram",
+            mode= 'skipgram',
             epochs=5,
             min_count=5,
             sampling_threshold=0.0001,
@@ -97,7 +103,9 @@ class SemanticAnalysis:
             negative_samples=5,
             batch_size=11,  #  = (2*window_size + 1) (Preferred. Used only if mode is batch_skipgram)
             evaluation=True,  # Perform similarity evaluation on WS-353 dataset at the end of training
-            subwords=False, # Subword embedding learning is not supported by batch_skipgram
+            subwords= True,
+            min_n=3,
+            max_n=6
         )
         try:
             self.bt_model.fit(inputs=self.data_channels, logs=True)
@@ -112,6 +120,7 @@ class SemanticAnalysis:
         try:
             self.s3_resource = boto3.resource("s3")
             key = self.bt_model.model_data[self.bt_model.model_data.find("/", 5) + 1 :]
+            print(key)
             self.s3_resource.Bucket(self.output_bucket).download_file(key, local_model_file)
         except Exception as e:
             print("Failed to download trained model, please contact admin.")
@@ -130,36 +139,63 @@ class SemanticAnalysis:
             print("Failed to evaluate learned model vectors, please contact admin.")
             self.close()
 
-    def deploy_trained_model(self, endpoint_name):
+    def deploy_trained_model(self, endpoint_name, trained_model_key):
         """
         deploy trained model to sagemaker endpoint
         """
-        try:
-            
-            self.endpoint_name = config.ENDPOINT_NAME if endpoint_name is None else endpoint_name
+        self.endpoint_name = config.ENDPOINT_NAME if endpoint_name is None else endpoint_name
+        if trained_model_key:
+            # check if the model exists
+            if not self.S3Bucket.file_exists_on_s3(trained_model_key):
+                print("Model does not exist, please contact admin.")
+                self.close()
+            else:
+                model_location = f"s3://{self.output_bucket}/{trained_model_key}"
+                self.bt_model = sagemaker.Model(model_data=model_location, # .tar.gz model S3 location
+                    image_uri=self.container, # BlazingText docker image
+                    role=self.role,
+                    sagemaker_session=self.session)
+                print( self.bt_model )
+        try:   
             self.bt_endpoint = self.bt_model.deploy(
-                initial_instance_count=1,
-                instance_type=config.HOSTING_INSTANCE_TYPE,
-                endpoint_name=endpoint_name,
-            )
+                    initial_instance_count=1,
+                    instance_type=config.HOSTING_INSTANCE_TYPE,
+                    endpoint_name=self.endpoint_name,
+                )
+                    
         except Exception as e:
             print("Failed to deploy model vectors, please contact admin.")
+            print(e)
             self.close()
 
-    def test_trained_model(self, word_list):
+    def test_trained_model(self, word_list, endpoint_name):
         """
         evaluate trained model with word list
         """
         payload = {"instances": word_list}
         try:
-            response = self.bt_endpoint.predict(
-                json.dumps(payload),
-                initial_args={"ContentType": "application/json", "Accept": "application/json"},
-            )
+            response = None
+            if not endpoint_name and self.bt_endpoint:
+                response = self.bt_endpoint.predict(
+                    json.dumps(payload),
+                    initial_args={"ContentType": "application/json", "Accept": "application/json"},
+                )
+                
+            else:
+                predictor = sagemaker.Predictor(
+                    endpoint_name=endpoint_name, 
+                    sagemaker_session=self.session,
+                    serializer=sagemaker.serializers.JSONSerializer(),
+                    #deserializer=sagemaker.deserializers.JSONDeserializer()
+                )
+                predictor.content_type = "application/json"
+                predictor.accept = "application/json"
+                response = predictor.predict(payload)
+
             vecs = json.loads(response)
-            print(vecs[:1])
-            output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
-            plot_word_vecs_tsne(None, vecs, output_image_path)
+            print(vecs)
+            # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
+            # plot_word_vecs_tsne(None, vecs, output_image_path)
         except Exception as e:
             print(e)
             self.close(self.endpoint_name )
@@ -172,10 +208,7 @@ class SemanticAnalysis:
             delete_endpoint(endpoint_name)
         if self.bt_model:
             self.bt_model = None
-        if self.s3_client:
-            self.s3_client.close()
-            self.s3_client = None
-        if self.s3_resource:
-            self.s3_resource = None
+        if self.S3Bucket:
+            self.S3Bucket = None
         if self.session:
             self.session = None
