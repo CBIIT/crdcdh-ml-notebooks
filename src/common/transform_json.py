@@ -164,7 +164,7 @@ def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
             if s3_file_key.endswith('.json'):
                 local_file_path = os.path.join(raw_data_folder, os.path.basename(s3_file_key))
                 s3.download_file(CRDCDH_S3_BUCKET, s3_file_key, local_file_path)
-                print(f'Downloaded {s3_file_key} to {local_file_path}')
+                print(f'Downloaded {s3_file_key} to {local_file_path} successfully')
 
 
 def transform_json_to_training_data(s3_json_file_prefix, s3_training_data_file_key):
@@ -203,6 +203,10 @@ def transform_json_to_training_data(s3_json_file_prefix, s3_training_data_file_k
     training_data_list = clean_training_data(training_data_list)
     output_file_path = os.path.join(training_data_folder, os.path.basename(s3_training_data_file_key))
     write_list_to_txt(training_data_list, output_file_path)
+    s3.upload_file(output_file_path, CRDCDH_S3_BUCKET, s3_training_data_file_key)
+    print(f'Uploaded {output_file_path} to {s3_training_data_file_key} successfully')
+
+
     
 
 
