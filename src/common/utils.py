@@ -29,3 +29,4 @@ def get_data_time(format = "%Y-%m-%d-%H-%M-%S-%f"):
     get current time in format
     """        
     return time.strftime(format)
+
