@@ -1,4 +1,5 @@
-import tarfile, json, time
+import tarfile, json
+from datetime import datetime 
 
 def untar_file(tar_file, dest_dir):
     """
@@ -27,6 +28,6 @@ def pretty_print_json(json_file):
 def get_data_time(format = "%Y-%m-%d-%H-%M-%S-%f"):
     """
     get current time in format
-    """        
-    return time.strftime(format)
+    """  
+    return datetime.strftime(datetime.now(), format)[:-3]
 
