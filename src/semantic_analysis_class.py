@@ -3,6 +3,7 @@ import glob
 import sagemaker
 import boto3
 import json
+import sys
 
 import sagemaker.deserializers
 import sagemaker.serializers
@@ -241,3 +242,7 @@ class SemanticAnalysis:
             self.S3Bucket = None
         if self.session:
             self.session = None
+        try:
+            sys.exit()
+        except SystemExit:
+            print("Completed!")
