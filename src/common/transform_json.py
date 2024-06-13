@@ -4,7 +4,7 @@ import os
 import json
 import re
 from datetime import datetime
-from src.common.sagemaker_config_sample import CRDCDH_S3_BUCKET, RAW_DATA_PREFIX, TRAIN_DATA_PREFIX
+from src.common.sagemaker_config import CRDCDH_S3_BUCKET, RAW_DATA_PREFIX, TRAIN_DATA_PREFIX
 
 def write_list_to_txt(input_list, file_path):
     if not os.path.exists(os.path.dirname(file_path)):
