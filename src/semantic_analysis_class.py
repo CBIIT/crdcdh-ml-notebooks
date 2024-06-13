@@ -79,7 +79,7 @@ class SemanticAnalysis:
                     # if json file in local folder, upload to designated s3 bucket
                     s3_raw_data_prefix = os.path.join(config.RAW_DATA_PREFIX, f"{self.image_name}-{self.data_time}/")
                     print(f"Upload raw data to s3 bucket, {s3_raw_data_prefix}.")
-                    # if in s3 bucket, download to local folder
+
                     json_files = glob.glob('{}/*.json'.format(local_raw_data_folder))
                     for file in json_files:
                         file_name = os.path.basename(file)
