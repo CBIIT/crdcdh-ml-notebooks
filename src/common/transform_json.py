@@ -202,7 +202,7 @@ def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_tra
         s3.upload_file(output_file_path, CRDCDH_S3_BUCKET, s3_training_data_file_key)
         print(f'Uploaded {output_file_path} to {s3_training_data_file_key} successfully')
     except Exception as e:
-        print(f'Failed to transform data: {e}')
+        print(f'Failed to transform data in transformer: {e}')
         raise Exception(f'Failed to transform data!')
     finally:
         if s3:
