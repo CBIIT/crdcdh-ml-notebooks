@@ -22,8 +22,8 @@ CONTAINER_IMAGE_NAME = "blazingtext"
 CONTAINER_IMAGE_VERSION = "latest"
 
 CRDCDH_S3_BUCKET = "crdcdh-ml-" + TIER
-TRAIN_DATA_PREFIX = "data/train/" + CONTAINER_IMAGE_NAME + "-"
-TEST_DATA_PREFIX = "data/test/" + CONTAINER_IMAGE_NAME + "-"
+TRAIN_DATA_PREFIX = "data/train/"
+TEST_DATA_PREFIX = "data/test/"
 RAW_DATA_PREFIX = "data/raw/json/"
 TRAIN_OUTPUTS_PREFIX = "train_output/"
 

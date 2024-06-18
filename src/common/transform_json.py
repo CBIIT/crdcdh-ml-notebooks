@@ -3,8 +3,7 @@ import boto3
 import os
 import json
 import re
-from datetime import datetime
-from src.common.sagemaker_config import CRDCDH_S3_BUCKET, RAW_DATA_PREFIX, TRAIN_DATA_PREFIX
+from common.sagemaker_config import CRDCDH_S3_BUCKET
 
 def write_list_to_txt(input_list, file_path):
     if not os.path.exists(os.path.dirname(file_path)):
@@ -167,44 +166,48 @@ def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
                 print(f'Downloaded {s3_file_key} to {local_file_path} successfully')
 
 
-def transform_json_to_training_data(s3_json_file_prefix, s3_training_data_file_key):
+def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_training_data_file_key, training_data_folder):
     NCIT = "ncit"
     GDC_PROPS = "gdc_props.json"
     GDC_VALUES = "gdc_values.json"
-    now = datetime.now()
-    timestamp = now.strftime("%Y-%m-%d-%H-%M-%S")
-    raw_data_folder = os.path.join(RAW_DATA_PREFIX, timestamp)
-    training_data_folder = TRAIN_DATA_PREFIX + timestamp
     s3= boto3.client('s3')
-    download_from_S3(s3, raw_data_folder, s3_json_file_prefix)
-    json_files = glob.glob('{}/*.json'.format(raw_data_folder))
-    ncit_files = [n for n in json_files if NCIT in n]
-    ncit_file = ncit_files[0]
-    with open(ncit_file, 'r') as file:
-        ncit_data = json.load(file)
-    training_data_list = []
-    for json_file in json_files:
-        if NCIT not in json_file and GDC_PROPS not in json_file and GDC_VALUES not in json_file:
-            with open(json_file, 'r') as file:
-                evsip_data = json.load(file)
-            evs_training_data = extract_transform_evs_data(evsip_data, ncit_data)
-            if len(evs_training_data) > 0:
-                training_data_list.extend(evs_training_data)
-        elif GDC_PROPS in json_file:
-            with open(os.path.join(raw_data_folder, GDC_PROPS), 'r') as file:
-                gdc_props_data = json.load(file)
-            with open(os.path.join(raw_data_folder, GDC_VALUES), 'r') as file:
-                gdc_values_data = json.load(file)
-            
-            gdc_training_data = extract_transform_gdc_data(gdc_props_data, gdc_values_data, ncit_data)
-            if len(gdc_training_data) > 0:
-                training_data_list.extend(gdc_training_data)
+    try:
+        download_from_S3(s3, raw_data_folder, s3_json_file_prefix)
+        json_files = glob.glob('{}/*.json'.format(raw_data_folder))
+        ncit_files = [n for n in json_files if NCIT in n]
+        ncit_file = ncit_files[0]
+        with open(ncit_file, 'r') as file:
+            ncit_data = json.load(file)
+        training_data_list = []
+        for json_file in json_files:
+            if NCIT not in json_file and GDC_PROPS not in json_file and GDC_VALUES not in json_file:
+                with open(json_file, 'r') as file:
+                    evsip_data = json.load(file)
+                evs_training_data = extract_transform_evs_data(evsip_data, ncit_data)
+                if len(evs_training_data) > 0:
+                    training_data_list.extend(evs_training_data)
+            elif GDC_PROPS in json_file:
+                with open(os.path.join(raw_data_folder, GDC_PROPS), 'r') as file:
+                    gdc_props_data = json.load(file)
+                with open(os.path.join(raw_data_folder, GDC_VALUES), 'r') as file:
+                    gdc_values_data = json.load(file)
+                
+                gdc_training_data = extract_transform_gdc_data(gdc_props_data, gdc_values_data, ncit_data)
+                if len(gdc_training_data) > 0:
+                    training_data_list.extend(gdc_training_data)
 
-    training_data_list = clean_training_data(training_data_list)
-    output_file_path = os.path.join(training_data_folder, os.path.basename(s3_training_data_file_key))
-    write_list_to_txt(training_data_list, output_file_path)
-    s3.upload_file(output_file_path, CRDCDH_S3_BUCKET, s3_training_data_file_key)
-    print(f'Uploaded {output_file_path} to {s3_training_data_file_key} successfully')
+        training_data_list = clean_training_data(training_data_list)
+        output_file_path = os.path.join(training_data_folder, os.path.basename(s3_training_data_file_key))
+        write_list_to_txt(training_data_list, output_file_path)
+        s3.upload_file(output_file_path, CRDCDH_S3_BUCKET, s3_training_data_file_key)
+        print(f'Uploaded {output_file_path} to {s3_training_data_file_key} successfully')
+    except Exception as e:
+        print(f'Failed to transform data in transformer: {e}')
+        raise Exception(f'Failed to transform data!')
+    finally:
+        if s3:
+            s3.close()
+            s3 = None
 
 
     
