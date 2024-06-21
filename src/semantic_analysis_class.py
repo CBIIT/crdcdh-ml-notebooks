@@ -61,7 +61,7 @@ class SemanticAnalysis:
             print(f"Using SageMaker BlazingText container: {self.container} ({self.region_name})")
         except Exception as e:
             print("Failed to download container, please contact admin.")
-            self.close()
+            self.close(1)
 
     def transformData(self, s3_raw_data_prefix):
         """
@@ -75,7 +75,7 @@ class SemanticAnalysis:
                 #check if json file in local folder
                 if not os.path.exists(local_raw_data_folder) or not any(fname.endswith('.json') for fname in os.listdir(local_raw_data_folder)):
                     print("No raw data found on s3 bucket or local folder")
-                    self.close()
+                    self.close(1)
                 else:
                     # if json file in local folder, upload to designated s3 bucket
                     s3_raw_data_prefix = os.path.join(config.RAW_DATA_PREFIX, f"{self.image_name}-{self.data_time}/")
@@ -93,9 +93,24 @@ class SemanticAnalysis:
             return s3_training_data_file_key
         except Exception as e:
             print(f"Failed to transform data, please contact admin, {e}")
-            self.close()
+            self.close(1)
 
-    def prepare_train_data(self, text8_file_s3_key):
+    def prepare_train_data(self, text8_file_s3_key, text8_file_local_path):
+
+        if not text8_file_s3_key or not self.S3Bucket.file_exists_on_s3(text8_file_s3_key):
+            if not text8_file_local_path or not os.path.exists(text8_file_local_path):
+                print("No training data found on s3 bucket or local folder")
+                self.close(1)
+            else:
+                # if text8 file in local folder, upload to designated s3 bucket
+                text8_file_s3_key = os.path.join(config.TRAIN_DATA_PREFIX, f"{self.image_name}-{self.timestamp}/train_data_text8")
+                print(f"Upload training data to s3 bucket, {text8_file_s3_key}.")
+                try: 
+                    self.S3Bucket.upload_file(text8_file_s3_key, text8_file_local_path)
+                    print(f"Training data uploaded to s3 bucket, {text8_file_s3_key}.")
+                except Exception as e:
+                    print(f"Failed to upload training data, please contact admin, {e}")
+                    self.close(1)
 
         self.s3_train_data = f"s3://{self.output_bucket}/{text8_file_s3_key}"
         train_data = sagemaker.session.s3_input(
@@ -106,7 +121,7 @@ class SemanticAnalysis:
         )
         self.data_channels = {"train": train_data}
 
-    def train(self):
+    def train(self, algorithm):
         """
         train model with sagemaker BlazingText
         """
@@ -121,27 +136,56 @@ class SemanticAnalysis:
             output_path=self.s3_output_location,
             sagemaker_session=self.session
         )
-        
-        self.bt_model.set_hyperparameters(
-            mode= 'skipgram',
-            epochs=5,
-            min_count=5,
-            sampling_threshold=0.0001,
-            learning_rate=0.05,
-            window_size=5,
-            vector_dim=100,
-            negative_samples=5,
-            batch_size=11,  #  = (2*window_size + 1) (Preferred. Used only if mode is batch_skipgram)
-            evaluation=True,  # Perform similarity evaluation on WS-353 dataset at the end of training
-            subwords= True,
-            min_n=3,
-            max_n=6
-        )
+        if algorithm == "FastText":
+            self.bt_model.set_hyperparameters(
+                mode= 'skipgram',
+                epochs=5,
+                min_count=5,
+                sampling_threshold=0.0001,
+                learning_rate=0.05,
+                window_size=5,
+                vector_dim=100,
+                negative_samples=5,
+                batch_size=11,  #  = (2*window_size + 1) (Preferred. Used only if mode is batch_skipgram)
+                evaluation=True,  # Perform similarity evaluation on WS-353 dataset at the end of training
+                subwords= True,
+                min_n=3,
+                max_n=6
+            )
+        elif algorithm == "Word2Vec":
+            self.bt_model.set_hyperparameters(
+                mode="batch_skipgram",
+                epochs=5,
+                min_count=5,
+                sampling_threshold=0.0001,
+                learning_rate=0.05,
+                window_size=5,
+                vector_dim=100,
+                negative_samples=5,
+                batch_size=11,  #  = (2*window_size + 1) (Preferred. Used only if mode is batch_skipgram)
+                evaluation=True,  # Perform similarity evaluation on WS-353 dataset at the end of training
+                subwords=False
+            ) 
+        elif algorithm == "TextClassification":
+            self.bt_model.set_hyperparameters(
+                mode="supervised",
+                vector_dim=10, # Although a default of 100 is used for word2vec,10 is sufficient for text classification in most of the cases
+                epochs=5,
+                early_stopping=True,
+                patience=4,       # Number of epochs to wait before early stopping if no progress on the validation set is observed
+                min_epochs=5,
+                learning_rate=0.05,
+                buckets=2000000, # No. of hash buckets to use for word n-grams
+                word_ngrams=2     # Number of word n-grams features to use.\
+              )
+        else:
+            print("Invalid algorithm, please contact admin.")
+            self.close(1)
         try:
             self.bt_model.fit(inputs=self.data_channels, logs=True)
         except Exception as e:
             print("Failed to train model, please contact admin.")
-            self.close()
+            self.close(1)
 
     def download_trained_model(self, local_model_file="../output/model.tar.gz"):
         """
@@ -154,7 +198,7 @@ class SemanticAnalysis:
             self.s3_resource.Bucket(self.output_bucket).download_file(key, local_model_file)
         except Exception as e:
             print("Failed to download trained model, please contact admin.")
-            self.close()
+            self.close(1)
 
     def evaluate_learned_model_vacs(self, local_model_file = "../output/model.tar.gz", to_local_path="../output/model"):
         """
@@ -167,7 +211,7 @@ class SemanticAnalysis:
             plot_word_vecs_tsne(to_local_path + "/vectors.txt", None, output_image_path)
         except Exception as e:
             print("Failed to evaluate learned model vectors, please contact admin.")
-            self.close()
+            self.close(1)
 
     def deploy_trained_model(self, endpoint_name, trained_model_key):
         """
@@ -178,7 +222,7 @@ class SemanticAnalysis:
             # check if the model exists
             if not self.S3Bucket.file_exists_on_s3(trained_model_key):
                 print("Model does not exist, please contact admin.")
-                self.close()
+                self.close(1)
             else:
                 model_location = f"s3://{self.output_bucket}/{trained_model_key}"
                 self.bt_model = sagemaker.Model(model_data=model_location, # .tar.gz model S3 location
@@ -196,7 +240,7 @@ class SemanticAnalysis:
         except Exception as e:
             print("Failed to deploy model vectors, please contact admin.")
             print(e)
-            self.close()
+            self.close(1)
 
     def test_trained_model(self, word_list, endpoint_name):
         """
@@ -228,9 +272,9 @@ class SemanticAnalysis:
             # plot_word_vecs_tsne(None, vecs, output_image_path)
         except Exception as e:
             print(e)
-            self.close(self.endpoint_name )
+            self.close(1, self.endpoint_name )
 
-    def close(self, endpoint_name=None):
+    def close(self, exit_code, endpoint_name=None):
         """
         delete endpoint and close s3_client, s3_resource, session
         """
@@ -243,6 +287,7 @@ class SemanticAnalysis:
         if self.session:
             self.session = None
         try:
-            sys.exit()
+            sys.exit(exit_code)
         except SystemExit:
-            print("Completed!")
+            msg = "Exited!" if exit_code == 1 else "Completed!"
+            print(msg)
