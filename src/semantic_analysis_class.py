@@ -3,10 +3,11 @@ import glob
 import sagemaker
 import boto3
 import json
-import sys
+import yaml
 
 import sagemaker.deserializers
 import sagemaker.serializers
+from sagemaker.blazingtext import BlazingTextModel
 from bento.common.s3 import S3Bucket
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
 import common.sagemaker_config as config
@@ -247,8 +248,9 @@ class SemanticAnalysis:
         evaluate trained model with word list
         """
         payload = {"instances": word_list}
+        response = None
         try:
-            response = None
+            
             if not endpoint_name and self.bt_endpoint:
                 response = self.bt_endpoint.predict(
                     json.dumps(payload),
@@ -273,6 +275,91 @@ class SemanticAnalysis:
         except Exception as e:
             print(e)
             self.close(1, self.endpoint_name )
+
+
+    def evaluate_trained_model(self, endpoint_name, yaml_file):
+        """
+        evaluate trained model with test datasets
+        """
+        response = None
+        bt_model = BlazingTextModel(model_data=model_path, role=role, sagemaker_session=sagemaker_session)
+
+        # runtime_client = boto3.client('runtime.sagemaker')
+        # eval_data = pd.DataFrame({
+        #     'text': ['Example text 1', 'Another example text', ...]
+        # })
+        runtime_client = boto3.client('sagemaker-runtime')
+        eval_dict = yaml.load(open(yaml_file, 'r'), Loader=yaml.SafeLoader)
+        eval_labels = eval_dict.keys()
+        # eval_data = [(key, eval_dict[key].keys()) for key in eval_labels] 
+        eval_data = [(key, eval_dict[key].values()) for key in eval_labels] #  Non-permissive values
+        # Prepare data for inference
+        payload = json.dumps(eval_data)
+
+        # Perform inference
+        response = runtime_client.invoke_endpoint(
+            EndpointName=endpoint_name,
+            ContentType='text/csv',
+            Body=payload
+        )
+
+        # Parse and process the inference response
+        predictions = json.loads(response['Body'].read().decode('utf-8'))
+
+        # Assuming your predictions are in the form of class labels or probabilities
+        # Evaluate the predictions against ground truth
+        ground_truth_labels = eval_labels # Actual labels from your evaluation dataset
+
+        # Example evaluation metric (replace with appropriate metric for your task)
+        accuracy = sum(1 for x, y in zip(predictions, ground_truth_labels) if x == y) / len(predictions)
+        print(f'Accuracy: {accuracy}')
+        # try:
+            
+        #     if not endpoint_name and self.bt_endpoint:
+        #         response = self.bt_endpoint.evaluate(
+        #             json.dumps(yaml_file),
+        #             initial_args={"ContentType": "application/json", "Accept": "application/json"},
+        #         )
+
+        #     else:
+        #         predictor = sagemaker.Predictor(
+        #             endpoint_name=endpoint_name,
+        #             sagemaker_session=self.session,
+        #             serializer=sagemaker.serializers.JSONSerializer(),
+        #             #deserializer=sagemaker.deserializers.JSONDeserializer()
+        #         )
+        #         predictor.content_type = "application/json"
+        #         predictor.accept = "application/json"
+        #         response = predictor.evaluate(yaml_file)
+
+        #     print(response)
+        #     # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
+        #     # plot_word_vecs_tsne(None, vecs, output_image_path)
+        # except Exception as e:
+        #     print(e)
+        #     self.close(1, self.endpoint_name)
+
+    def describe_endpoint(self, endpoint_name):
+        """
+        try:
+            response = None
+            if not endpoint_name and self.bt_endpoint:
+                response = self.bt_endpoint.describe()
+            else:
+                predictor = sagemaker.Predictor(
+                    endpoint_name=endpoint_name,
+                    sagemaker_session=self.session,
+                    serializer=sagemaker.serializers.JSONSerializer(),
+                    #deserializer=sagemaker.deserializers.JSONDeserializer()
+                )
+                response = predictor.describe()
+
+            print(response)
+            # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
+            # plot_word_vecs_tsne(None, vecs, output_image_path)
+        except Exception as e:
+            print(e)
+            self.close(1, self.endpoint_name)
 
     def close(self, exit_code, endpoint_name=None):
         """
