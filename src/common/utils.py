@@ -1,4 +1,4 @@
-import tarfile, json
+import tarfile, json, re
 from datetime import datetime 
 
 def untar_file(tar_file, dest_dir):
@@ -30,4 +30,10 @@ def get_data_time(format = "%Y-%m-%d-%H-%M-%S-%f"):
     get current time in format
     """  
     return datetime.strftime(datetime.now(), format)[:-3]
+
+# Function to preprocess text
+def preprocess_text(text):
+    text = text.lower() if text else ''  # Convert to lowercase
+    text = re.sub(r'[^\w\s]', '', text) if text else ''  # Remove punctuation
+    return text
 

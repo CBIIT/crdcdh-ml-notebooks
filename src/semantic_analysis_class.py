@@ -1,4 +1,4 @@
-import os
+import os, sys
 import glob
 import sagemaker
 import boto3
@@ -7,13 +7,15 @@ import yaml
 
 import sagemaker.deserializers
 import sagemaker.serializers
-from sagemaker.blazingtext import BlazingTextModel
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics.pairwise import cosine_similarity
 from bento.common.s3 import S3Bucket
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
 import common.sagemaker_config as config
-from common.utils import untar_file, pretty_print_json, get_data_time
+from common.utils import untar_file, pretty_print_json, get_data_time, preprocess_text
 from common.visualize_word_vecs import plot_word_vecs_tsne
 from common.transform_json import transform_json_to_training_data
+import numpy as np
 
 class SemanticAnalysis:
     def __init__(self):
@@ -207,7 +209,7 @@ class SemanticAnalysis:
         """
         try:
             untar_file(local_model_file, to_local_path)
-            pretty_print_json(to_local_path + "/eval.json")
+            # pretty_print_json(to_local_path + "/eval.json")
             output_image_path = str.replace(to_local_path, "output/model", "temp") + "/model_vecs_" + self.data_time + ".png"
             plot_word_vecs_tsne(to_local_path + "/vectors.txt", None, output_image_path)
         except Exception as e:
@@ -270,6 +272,8 @@ class SemanticAnalysis:
 
             vecs = json.loads(response)
             print(vecs)
+            similarity = cosine_similarity([vecs[0]["vector"]], [vecs[1]["vector"]])[0][0]
+            print(similarity)
             # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
             # plot_word_vecs_tsne(None, vecs, output_image_path)
         except Exception as e:
@@ -282,84 +286,58 @@ class SemanticAnalysis:
         evaluate trained model with test datasets
         """
         response = None
-        bt_model = BlazingTextModel(model_data=model_path, role=role, sagemaker_session=sagemaker_session)
-
-        # runtime_client = boto3.client('runtime.sagemaker')
-        # eval_data = pd.DataFrame({
-        #     'text': ['Example text 1', 'Another example text', ...]
-        # })
-        runtime_client = boto3.client('sagemaker-runtime')
         eval_dict = yaml.load(open(yaml_file, 'r'), Loader=yaml.SafeLoader)
-        eval_labels = eval_dict.keys()
-        # eval_data = [(key, eval_dict[key].keys()) for key in eval_labels] 
-        eval_data = [(key, eval_dict[key].values()) for key in eval_labels] #  Non-permissive values
+        eval_values = eval_dict.values()
+        paired_words = []
+        for dict in eval_values:
+            paired_words.extend(dict.items())
+
         # Prepare data for inference
-        payload = json.dumps(eval_data)
-
-        # Perform inference
-        response = runtime_client.invoke_endpoint(
-            EndpointName=endpoint_name,
-            ContentType='text/csv',
-            Body=payload
-        )
-
-        # Parse and process the inference response
-        predictions = json.loads(response['Body'].read().decode('utf-8'))
-
-        # Assuming your predictions are in the form of class labels or probabilities
-        # Evaluate the predictions against ground truth
-        ground_truth_labels = eval_labels # Actual labels from your evaluation dataset
-
-        # Example evaluation metric (replace with appropriate metric for your task)
-        accuracy = sum(1 for x, y in zip(predictions, ground_truth_labels) if x == y) / len(predictions)
-        print(f'Accuracy: {accuracy}')
-        # try:
-            
-        #     if not endpoint_name and self.bt_endpoint:
-        #         response = self.bt_endpoint.evaluate(
-        #             json.dumps(yaml_file),
-        #             initial_args={"ContentType": "application/json", "Accept": "application/json"},
-        #         )
-
-        #     else:
-        #         predictor = sagemaker.Predictor(
-        #             endpoint_name=endpoint_name,
-        #             sagemaker_session=self.session,
-        #             serializer=sagemaker.serializers.JSONSerializer(),
-        #             #deserializer=sagemaker.deserializers.JSONDeserializer()
-        #         )
-        #         predictor.content_type = "application/json"
-        #         predictor.accept = "application/json"
-        #         response = predictor.evaluate(yaml_file)
-
-        #     print(response)
-        #     # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
-        #     # plot_word_vecs_tsne(None, vecs, output_image_path)
-        # except Exception as e:
-        #     print(e)
-        #     self.close(1, self.endpoint_name)
-
-    def describe_endpoint(self, endpoint_name):
-        """
+        print(f"Non-permissove/permissive pairs: {paired_words[:10]}")
+        print("Total paired words: " + str(len(paired_words)))
+        similarities = []
         try:
-            response = None
+            
             if not endpoint_name and self.bt_endpoint:
-                response = self.bt_endpoint.describe()
+                
+                for item in paired_words:
+                    if not item or not isinstance(item, tuple):
+                        continue
+                    payload = {"instances": [preprocess_text(item.key), preprocess_text(item.value)]}
+                    response = self.bt_endpoint.predict(
+                        json.dumps(payload),
+                        initial_args={"ContentType": "application/json", "Accept": "application/json"},
+                    )
+                    similarity = cosine_similarity([response[0]["vector"]], [response[1]["vector"]])[0][0]
+                    similarities.append(similarity)
+                
             else:
                 predictor = sagemaker.Predictor(
                     endpoint_name=endpoint_name,
                     sagemaker_session=self.session,
                     serializer=sagemaker.serializers.JSONSerializer(),
-                    #deserializer=sagemaker.deserializers.JSONDeserializer()
+                    # deserializer=sagemaker.deserializers.JSONDeserializer()
                 )
-                response = predictor.describe()
-
-            print(response)
-            # output_image_path = "../temp/vecs_test_" + self.data_time + ".png"
-            # plot_word_vecs_tsne(None, vecs, output_image_path)
+                predictor.content_type = "application/json"
+                predictor.accept = "application/json"
+                for key, val in paired_words:
+                    if not key or not val:
+                        continue
+                    payload = {"instances": [preprocess_text(key), preprocess_text(val)]}
+                    # print(f"key: {key}, val: {val}")
+                    response = predictor.predict(payload)
+                    vecs = json.loads(response)
+                    similarity = cosine_similarity([vecs[0]["vector"]], [vecs[1]["vector"]])[0][0]
+                    similarities.append(similarity)
+            print(similarities[:10])
+            # Compute accuracy
+            mean_similarity = np.mean(similarities)
+            print(f"Mean similarity: {mean_similarity:.4f}")
         except Exception as e:
             print(e)
             self.close(1, self.endpoint_name)
+
+
 
     def close(self, exit_code, endpoint_name=None):
         """
