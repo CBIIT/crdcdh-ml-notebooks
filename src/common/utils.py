@@ -25,7 +25,7 @@ def pretty_print_json(json_file):
     """
     print(json.dumps(load_json(json_file), indent=4))
 
-def get_data_time(format = "%Y-%m-%d-%H-%M-%S-%f"):
+def get_date_time(format = "%Y-%m-%d-%H-%M-%S-%f"):
     """
     get current time in format
     """  
