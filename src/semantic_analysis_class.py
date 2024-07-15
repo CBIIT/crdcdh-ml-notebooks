@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from bento.common.s3 import S3Bucket
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
 import common.sagemaker_config as config
-from common.utils import untar_file, pretty_print_json, get_data_time, preprocess_text
+from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text
 from common.visualize_word_vecs import plot_word_vecs_tsne
 from common.transform_json import transform_json_to_training_data
 import numpy as np
@@ -25,9 +25,9 @@ class SemanticAnalysis:
         create_local_output_dirs(["../output", "../output/model", "../data", "../data/raw", "../data/raw/json","../temp"]) # create local directories if not exist.
         self.endpoint_name = None
         self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET)
-        self.timestamp = get_data_time()
-        self.data_time = get_data_time("%Y-%m-%d-%H-%M-%S")
-        self.session = get_sagemaker_session()
+        self.timestamp = get_date_time()
+        self.data_time = get_date_time("%Y-%m-%d-%H-%M-%S")
+        self.session = get_sagemaker_session(config.AWS_SAGEMAKER_USER, config.RUN_LOCAL)
         self.role = get_sagemaker_execute_role(self.session)
         # print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
         self.region_name = boto3.Session().region_name
@@ -43,6 +43,8 @@ class SemanticAnalysis:
         self.bt_model = None
         self.data_channels = None
         self.bt_endpoint = None
+        self.trained_model_vectors_path = "../output/model/vectors.txt"
+        self.trained_model_vectors = None
 
     def get_s3_bucket(self):
         """
@@ -278,7 +280,7 @@ class SemanticAnalysis:
             # plot_word_vecs_tsne(None, vecs, output_image_path)
         except Exception as e:
             print(e)
-            self.close(1, self.endpoint_name )
+            self.close(1)
 
 
     def evaluate_trained_model(self, endpoint_name, yaml_file):
@@ -300,15 +302,16 @@ class SemanticAnalysis:
             
             if not endpoint_name and self.bt_endpoint:
                 
-                for item in paired_words:
-                    if not item or not isinstance(item, tuple):
+                for key, val in paired_words:
+                    if not key or not val:
                         continue
-                    payload = {"instances": [preprocess_text(item.key), preprocess_text(item.value)]}
+                    payload = {"instances": [preprocess_text(key), preprocess_text(val)]}
                     response = self.bt_endpoint.predict(
                         json.dumps(payload),
                         initial_args={"ContentType": "application/json", "Accept": "application/json"},
                     )
-                    similarity = cosine_similarity([response[0]["vector"]], [response[1]["vector"]])[0][0]
+                    vecs = json.loads(response)
+                    similarity = cosine_similarity([vecs[0]["vector"]], [vecs[1]["vector"]])[0][0]
                     similarities.append(similarity)
                 
             else:
@@ -333,11 +336,108 @@ class SemanticAnalysis:
             # Compute accuracy
             mean_similarity = np.mean(similarities)
             print(f"Mean similarity: {mean_similarity:.4f}")
+            return mean_similarity
         except Exception as e:
             print(e)
-            self.close(1, self.endpoint_name)
+            self.close(1)
 
+    def search_similar_words(self, word, endpoint_name, top_k=5):
+        """
+        search similar words for a given word
+        """
+        response = None
+        query_word = preprocess_text(word)
+        try:
+            if not endpoint_name and self.bt_endpoint:
+                response = self.bt_endpoint.predict(
+                    json.dumps({"instances": [query_word]}),
+                    initial_args={"ContentType": "application/json", "Accept": "application/json"},
+                )
+            else:
+                predictor = sagemaker.Predictor(
+                    endpoint_name=endpoint_name,
+                    sagemaker_session=self.session,
+                    serializer=sagemaker.serializers.JSONSerializer(),
+                    # deserializer=sagemaker.deserializers.JSONDeserializer()
+                )
+                predictor.content_type = "application/json"
+                predictor.accept = "application/json"
+                response = predictor.predict({"instances": [preprocess_text(word)]})
 
+            query_vec = json.loads(response)[0]["vector"]
+            print(f"{query_word}:{query_vec}")
+            # Get the top_k most similar words to the given word
+            if not self.trained_model_vectors:
+                self.trained_model_vectors = load_model_vectors(self.trained_model_vectors_path) 
+            similarities = {}
+            for word, vec in self.trained_model_vectors.items():
+                # print(word, vec)
+                similarity = cosine_similarity([query_vec], [vec])[0][0]
+                if query_word == word:
+                    print(f"Similarity between {word} and {query_word}: {similarity:.4f}")
+                    print(vec)
+                similarities[word] = similarity
+            # Sort words by similarity and get top_k words
+            sorted_similar_words = sorted(similarities.items(), key=lambda item: item[1], reverse=True)[:top_k]
+            print(sorted_similar_words)
+            return sorted_similar_words
+        except Exception as e:
+            print(e)
+            self.close(1)
+    
+    def search_from_permissive_values(self, word, permissive_values, endpoint_name, top_k=5):
+        """
+        search similar words for a given word from permissive values
+        """
+        response = None
+        query_word = preprocess_text(word)
+        query_words= [query_word]
+        from_words = [preprocess_text(word) for word in permissive_values]
+        query_words= [*query_words, *from_words]
+        # print(query_words)
+        word_vec = None
+        similar_word = []
+        try:
+            if not endpoint_name and self.bt_endpoint:
+                response = self.bt_endpoint.predict(
+                    json.dumps({"instances": query_words}),
+                    initial_args={"ContentType": "application/json", "Accept": "application/json"},
+                )
+
+            else:
+                predictor = sagemaker.Predictor(
+                    endpoint_name=endpoint_name,
+                    sagemaker_session=self.session,
+                    serializer=sagemaker.serializers.JSONSerializer(),
+                    # deserializer=sagemaker.deserializers.JSONDeserializer()
+                )
+                predictor.content_type = "application/json"
+                predictor.accept = "application/json"
+                response = predictor.predict({"instances": query_words})
+            word_vec = json.loads(response)
+            # print(word_vec)
+            query_vec = word_vec[0]["vector"]
+            permissive_vectors = word_vec[1:]
+            permissive_val_index = 0
+            similarities = {}
+            for item in permissive_vectors:
+                print(item["word"], item["vector"])
+                similarity = cosine_similarity([query_vec], [item["vector"]])[0][0]
+                if query_word == item["word"]:
+                    print(f"Similarity between {word} and {query_word}: {similarity:.4f}")
+                    print(item["vector"])
+                    similar_word.append(permissive_values[permissive_val_index])
+                    return similar_word
+                else:
+                    similarities[item["word"]] = similarity
+                permissive_val_index += 1
+            # Sort words by similarity and get top_k words
+            similar_word = sorted(similarities.items(), key=lambda item: item[1], reverse=True)[:top_k]
+            print(similar_word)
+            return similar_word
+        except Exception as e:
+            print(e)
+            self.close(1)
 
     def close(self, exit_code, endpoint_name=None):
         """
@@ -356,3 +456,25 @@ class SemanticAnalysis:
         except SystemExit:
             msg = "Exited!" if exit_code == 1 else "Completed!"
             print(msg)
+
+def load_model_vectors(model_vectors_file):
+        """
+        load model vectors from file
+        """
+        word_to_vec = {}
+        try:
+            with open(model_vectors_file, 'r') as file:
+                i=0
+                for line in file:
+                    # skip line 1
+                    if i==0:
+                        i+=1
+                        continue
+                    parts = line.strip().split()
+                    word = parts[0]
+                    vector = list(np.float_(parts[1:]))
+                    word_to_vec[word] = vector
+            return word_to_vec
+        except Exception as e:
+            print("Failed to load model vectors, please contact admin.")
+            raise e

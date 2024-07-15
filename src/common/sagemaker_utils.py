@@ -8,33 +8,38 @@ from botocore.exceptions import ClientError
 import numpy as np
 import common.sagemaker_config as config
 
-def get_sagemaker_session(is_Local = False):
+def get_sagemaker_session(aws_user, run_Locally = False):
     """
     Get sagemaker session
     @param is_Local: is local
     @return: sagemaker session
     """
-    if not is_Local: 
-        if config.TIER == "loc":
-            # Create a configuration dictionary manually
-            custom_sagemaker_config = load_sagemaker_config(
-                additional_config_paths=[
-                    os.path.join(config.ROOT_DIR, "configs/sagemaker/config.yaml")
-                ]
-            )
-            # Then validate that the dictionary adheres to the configuration schema
-            validate_sagemaker_config(custom_sagemaker_config)
-            # Then initialize the Session object with the configuration dictionary
-            return Session(
-                sagemaker_config = custom_sagemaker_config
-            )
+    if run_Locally == True: 
+        # Create a configuration dictionary manually
+        custom_sagemaker_config = load_sagemaker_config(
+            additional_config_paths=[
+                os.path.join(config.ROOT_DIR, "configs/sagemaker/config.yaml")
+            ]
+        )
+        # Then validate that the dictionary adheres to the configuration schema
+        validate_sagemaker_config(custom_sagemaker_config)
+        boto3_session = None
+        if aws_user:
+            boto3_session = boto3.Session(profile_name=aws_user)
         else:
-            return Session()
-    
+            boto3_session = boto3.Session()
+        # Then initialize the Session object with the configuration dictionary
+        return Session(
+            boto_session = boto3_session,
+            sagemaker_config = custom_sagemaker_config
+        ) 
     else:
-        sagemaker_session = LocalSession()
-        sagemaker_session.config = {'local': {'local_code': True, 'region_name': "us-east-1" }}
-        return sagemaker_session
+        return Session()
+    
+    # else:
+    #     sagemaker_session = LocalSession()
+    #     sagemaker_session.config = {'local': {'local_code': True, 'region_name': "us-east-1" }}
+    #     return sagemaker_session
 
 def delete_endpoint(endpoint_name):
     """
@@ -59,7 +64,7 @@ def get_sagemaker_execute_role(sagemaker_session):
     @param sagemaker_session: sagemaker session
     @return: sagemaker execute role
     """
-    if config.TIER == "loc":
+    if config.RUN_LOCAL == True:
         return config.SAGEMAKER_EXECUTE_ROLE
     else:
         return get_execution_role(sagemaker_session)
