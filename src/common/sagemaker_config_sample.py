@@ -22,8 +22,8 @@ CONTAINER_IMAGE_NAME = "blazingtext"
 CONTAINER_IMAGE_VERSION = "latest"
 
 CRDCDH_S3_BUCKET = "crdcdh-ml-" + TIER
-TRAIN_DATA_PREFIX = "data/train/" + CONTAINER_IMAGE_NAME + "-"
-TEST_DATA_PREFIX = "data/test/" + CONTAINER_IMAGE_NAME + "-"
+TRAIN_DATA_PREFIX = "data/train/"
+TEST_DATA_PREFIX = "data/test/"
 RAW_DATA_PREFIX = "data/raw/json/"
 TRAIN_OUTPUTS_PREFIX = "train_output/"
 
@@ -33,6 +33,9 @@ HOSTING_INSTANCE_TYPE = "ml.m4.xlarge"
 SOLUTION_PREFIX = "crdcdh-ml"
 TAG_KEY = SOLUTION_PREFIX + "-" + TIER
 ENDPOINT_NAME = TAG_KEY + "-endpoint"
+
+AWS_SAGEMAKER_USER = "crdc-dh-sagemaker-user"
+RUN_LOCAL = True
 
 # execute-role for sagemaker in FNL for local development only
 SAGEMAKER_EXECUTE_ROLE = ""
