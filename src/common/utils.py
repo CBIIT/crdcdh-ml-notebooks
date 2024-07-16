@@ -1,4 +1,4 @@
-import tarfile, json, re
+import tarfile, json, re, boto3
 from datetime import datetime 
 
 def untar_file(tar_file, dest_dir):
@@ -36,4 +36,7 @@ def preprocess_text(text):
     text = text.lower() if text else ''  # Convert to lowercase
     text = re.sub(r'[^\w\s]', '', text) if text else ''  # Remove punctuation
     return text
+
+def get_boto3_session(aws_profile=None):
+    return boto3.Session(profile_name=aws_profile) if aws_profile else boto3.Session()
 

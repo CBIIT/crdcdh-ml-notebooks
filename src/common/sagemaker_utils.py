@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 import numpy as np
 import common.sagemaker_config as config
 
-def get_sagemaker_session(aws_user, run_Locally = False):
+def get_sagemaker_session(boto3_session, run_Locally = False):
     """
     Get sagemaker session
     @param is_Local: is local
@@ -23,11 +23,6 @@ def get_sagemaker_session(aws_user, run_Locally = False):
         )
         # Then validate that the dictionary adheres to the configuration schema
         validate_sagemaker_config(custom_sagemaker_config)
-        boto3_session = None
-        if aws_user:
-            boto3_session = boto3.Session(profile_name=aws_user)
-        else:
-            boto3_session = boto3.Session()
         # Then initialize the Session object with the configuration dictionary
         return Session(
             boto_session = boto3_session,
@@ -36,22 +31,23 @@ def get_sagemaker_session(aws_user, run_Locally = False):
     else:
         return Session()
     
-    # else:
-    #     sagemaker_session = LocalSession()
-    #     sagemaker_session.config = {'local': {'local_code': True, 'region_name': "us-east-1" }}
-    #     return sagemaker_session
+def get_local_session():
+    sagemaker_session = LocalSession()
+    sagemaker_session.config = {'local': {'local_code': True, 'region_name': "us-east-1" }}
+    return sagemaker_session
 
-def delete_endpoint(endpoint_name):
+def delete_endpoint(endpoint_name, boto3_session):
     """
     Delete endpoint and endpoint configuration
     @param endpoint_name: endpoint name
     """
     sagemaker_client = None
     try:
-        sagemaker_client = boto3.client("sagemaker")
+        sagemaker_client = boto3_session.client("sagemaker")
         sagemaker_client.delete_endpoint(EndpointName=endpoint_name)
         sagemaker_client.delete_endpoint_config(EndpointConfigName=endpoint_name)
     except ClientError as ce:
+        sagemaker_client.delete_endpoint_config(EndpointConfigName=endpoint_name)
         print(ce)
     finally:
         if sagemaker_client:

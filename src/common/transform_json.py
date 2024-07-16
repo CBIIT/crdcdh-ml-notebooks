@@ -166,11 +166,11 @@ def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
                 print(f'Downloaded {s3_file_key} to {local_file_path} successfully')
 
 
-def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_training_data_file_key, training_data_folder):
+def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_training_data_file_key, training_data_folder, session):
     NCIT = "ncit"
     GDC_PROPS = "gdc_props.json"
     GDC_VALUES = "gdc_values.json"
-    s3= boto3.client('s3')
+    s3= session.client('s3')
     try:
         download_from_S3(s3, raw_data_folder, s3_json_file_prefix)
         json_files = glob.glob('{}/*.json'.format(raw_data_folder))

@@ -4,32 +4,33 @@ import sagemaker
 import boto3
 import json
 import yaml
-
+from botocore.exceptions import ClientError
 import sagemaker.deserializers
 import sagemaker.serializers
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.metrics.pairwise import cosine_similarity
-from bento.common.s3 import S3Bucket
-from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
+from common.s3 import S3Bucket
+from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs, get_local_session
 import common.sagemaker_config as config
-from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text
+from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session
 from common.visualize_word_vecs import plot_word_vecs_tsne
 from common.transform_json import transform_json_to_training_data
 import numpy as np
 
 class SemanticAnalysis:
-    def __init__(self):
+    def __init__(self, is_local = False):
         """
         constructor of SemanticAnalysis
         """
         create_local_output_dirs(["../output", "../output/model", "../data", "../data/raw", "../data/raw/json","../temp"]) # create local directories if not exist.
         self.endpoint_name = None
-        self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET)
+        self.boto3_session = get_boto3_session(config.AWS_SAGEMAKER_USER)
+        self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET, self.boto3_session)
         self.timestamp = get_date_time()
         self.data_time = get_date_time("%Y-%m-%d-%H-%M-%S")
-        self.session = get_sagemaker_session(config.AWS_SAGEMAKER_USER, config.RUN_LOCAL)
-        self.role = get_sagemaker_execute_role(self.session)
-        # print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
+        self.session = get_sagemaker_session(self.boto3_session, config.RUN_LOCAL) if not is_local else get_local_session()
+        self.role = get_sagemaker_execute_role(self.session) if not is_local else config.SAGEMAKER_EXECUTE_ROLE
+        print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
         self.region_name = boto3.Session().region_name
         self.output_bucket = config.CRDCDH_S3_BUCKET
         self.raw_data_prefix = config.RAW_DATA_PREFIX
@@ -94,7 +95,7 @@ class SemanticAnalysis:
 
             local_raw_data_folder_path = os.path.join(local_raw_data_folder, f"{self.image_name}-{self.data_time}/")
             local_train_data_folder_path = os.path.join(local_train_data_folder, f"{self.image_name}-{self.data_time}/")
-            transform_json_to_training_data(s3_raw_data_prefix, local_raw_data_folder_path, s3_training_data_file_key, local_train_data_folder_path)
+            transform_json_to_training_data(s3_raw_data_prefix, local_raw_data_folder_path, s3_training_data_file_key, local_train_data_folder_path, self.boto3_session)
             return s3_training_data_file_key
         except Exception as e:
             print(f"Failed to transform data, please contact admin, {e}")
@@ -188,7 +189,10 @@ class SemanticAnalysis:
             self.close(1)
         try:
             self.bt_model.fit(inputs=self.data_channels, logs=True)
+        except ClientError as ce: 
+            print(ce)
         except Exception as e:
+            print(e)
             print("Failed to train model, please contact admin.")
             self.close(1)
 
@@ -197,10 +201,9 @@ class SemanticAnalysis:
         download trained model from s3
         """
         try:
-            self.s3_resource = boto3.resource("s3")
             key = self.bt_model.model_data[self.bt_model.model_data.find("/", 5) + 1 :]
             print(key)
-            self.s3_resource.Bucket(self.output_bucket).download_file(key, local_model_file)
+            self.S3Bucket.download_file(key, local_model_file)
         except Exception as e:
             print("Failed to download trained model, please contact admin.")
             self.close(1)
@@ -241,7 +244,9 @@ class SemanticAnalysis:
                     instance_type=config.HOSTING_INSTANCE_TYPE,
                     endpoint_name=self.endpoint_name,
                 )
-                    
+        except ClientError as ce: 
+            delete_endpoint(self.endpoint_name, self.boto3_session)  
+            self.deploy_trained_model(endpoint_name, trained_model_key)
         except Exception as e:
             print("Failed to deploy model vectors, please contact admin.")
             print(e)
@@ -421,11 +426,11 @@ class SemanticAnalysis:
             permissive_val_index = 0
             similarities = {}
             for item in permissive_vectors:
-                print(item["word"], item["vector"])
+                # print(item["word"], item["vector"])
                 similarity = cosine_similarity([query_vec], [item["vector"]])[0][0]
                 if query_word == item["word"]:
-                    print(f"Similarity between {word} and {query_word}: {similarity:.4f}")
-                    print(item["vector"])
+                    print(f"The same word (lowercase) found: {word}, {similarity:.4f}")
+                    # print(item["vector"])
                     similar_word.append(permissive_values[permissive_val_index])
                     return similar_word
                 else:
@@ -433,7 +438,8 @@ class SemanticAnalysis:
                 permissive_val_index += 1
             # Sort words by similarity and get top_k words
             similar_word = sorted(similarities.items(), key=lambda item: item[1], reverse=True)[:top_k]
-            print(similar_word)
+            similar_word = [item for item in similar_word if item[1] > 0.5]
+            # print(similar_word)
             return similar_word
         except Exception as e:
             print(e)
@@ -444,7 +450,7 @@ class SemanticAnalysis:
         delete endpoint and close s3_client, s3_resource, session
         """
         if endpoint_name:
-            delete_endpoint(endpoint_name)
+            delete_endpoint(endpoint_name, self.boto3_session)
         if self.bt_model:
             self.bt_model = None
         if self.S3Bucket:
