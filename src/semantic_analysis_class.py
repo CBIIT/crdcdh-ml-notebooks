@@ -1,7 +1,6 @@
 import os, sys
 import glob
 import sagemaker
-import boto3
 import json
 import yaml
 from botocore.exceptions import ClientError
@@ -12,9 +11,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 from common.s3 import S3Bucket
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs, get_local_session
 import common.sagemaker_config as config
-from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session
+from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session, dump_dict_to_json
 from common.visualize_word_vecs import plot_word_vecs_tsne
 from common.transform_json import transform_json_to_training_data
+from common.permissive_value_factory import DataModelFactory
 import numpy as np
 
 class SemanticAnalysis:
@@ -31,7 +31,7 @@ class SemanticAnalysis:
         self.session = get_sagemaker_session(self.boto3_session, config.RUN_LOCAL) if not is_local else get_local_session()
         self.role = get_sagemaker_execute_role(self.session) if not is_local else config.SAGEMAKER_EXECUTE_ROLE
         print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
-        self.region_name = boto3.Session().region_name
+        self.region_name = self.boto3_session.region_name
         self.output_bucket = config.CRDCDH_S3_BUCKET
         self.raw_data_prefix = config.RAW_DATA_PREFIX
         self.train_data_prefix = config.TRAIN_DATA_PREFIX + self.timestamp
@@ -46,6 +46,7 @@ class SemanticAnalysis:
         self.bt_endpoint = None
         self.trained_model_vectors_path = "../output/model/vectors.txt"
         self.trained_model_vectors = None
+        self.is_local = is_local
 
     def get_s3_bucket(self):
         """
@@ -63,7 +64,8 @@ class SemanticAnalysis:
         if version is None:
             version = config.CONTAINER_IMAGE_VERSION
         try:   
-            self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version)
+            self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version) if not self.is_local else \
+                sagemaker.image_uris.retrieve("blazingtext", self.region_name, "latest")
             print(f"Using SageMaker BlazingText container: {self.container} ({self.region_name})")
         except Exception as e:
             print("Failed to download container, please contact admin.")
@@ -141,7 +143,18 @@ class SemanticAnalysis:
             input_mode="File",
             output_path=self.s3_output_location,
             sagemaker_session=self.session
+        ) if not self.is_local else \
+           sagemaker.estimator.Estimator(
+            self.container,
+            self.role, 
+            instance_count=1,
+            instance_type='local', 
+            input_mode= 'File',
+            output_path=self.s3_output_location,
+            sagemaker_session=self.session,
+            # image_uri="811284229777.dkr.ecr.us-east-1.amazonaws.com/blazingtext:latest"
         )
+            
         if algorithm == "FastText":
             self.bt_model.set_hyperparameters(
                 mode= 'skipgram',
@@ -445,6 +458,89 @@ class SemanticAnalysis:
             print(e)
             self.close(1)
 
+    def generate_permissive_value_vectors(self, endpoint_name):
+        """
+        generate permissive value vectors for a given word
+        """
+        permissive_value_vectors = None
+        properties = None
+        data_model_factory = DataModelFactory(config.DATA_MODEL_LOCATION, f'{config.TIER}{2}')
+        data_model_props = data_model_factory.models
+        if not data_model_props or len(data_model_props.items()) == 0:
+            print("No data model properties found.")
+            self.close(1)
+        data_model_props_vectors = {}
+        try:
+            
+            for key, val in data_model_props.items():
+                # print(key, val)
+                properties = {}
+                if not val or not isinstance(val, dict):
+                    continue
+                for prop_name, words in val.items():
+                    # print(prop_name, words)
+                    if not words or not isinstance(words, list):
+                        continue
+
+                    permissive_value_vectors = {}
+                    word_vectors = self.get_word_vectors(words, endpoint_name)
+                    if not word_vectors or len(word_vectors) == 0:
+                        continue
+                    for item in word_vectors:
+                        if not item["word"] or not item["vector"]:
+                            continue
+                        print(item["word"], item["vector"])
+                        word = [word for word in words if str.strip(word.lower()) == item["word"].lower()]
+                        word = word[0] if word else None
+                        if not word:
+                            print(f"No word found for {item['word']}.")
+                            continue
+
+                        permissive_value_vectors[word] = item["vector"]
+
+                    properties[prop_name] = permissive_value_vectors
+
+                data_model_props_vectors[key] = properties 
+                permissive_value_vectors_local_path = "../output/crdcdh-permissive-values.json"
+                dump_dict_to_json(data_model_props_vectors, "../output/crdcdh-permissive-values.json")
+                permissive_value_vectors_key= os.path.join(self.output_prefix, "crdcdh-permissive-values.json")
+                self.S3Bucket.upload_file(permissive_value_vectors_key, permissive_value_vectors_local_path) 
+                print(f"Uploaded permissive value vectors to {permissive_value_vectors_key}")  
+        except ClientError as ce:
+            print("Failed to uploaded generate permissive value vectors to s3 bucket.")
+            print(ce)
+            self.close(1)          
+        except Exception as e:
+            print("Failed to generate permissive value vectors")
+            print(e)
+            self.close(1)  
+
+    def get_word_vectors(self, words, endpoint_name):
+        """
+        get word vectors for a list of words
+        """
+        response = None
+        query_words = [str.strip(word.lower())for word in words if word]
+        # print(query_words)
+        if not endpoint_name and self.bt_endpoint:
+            response = self.bt_endpoint.predict(
+                json.dumps({"instances": query_words}),
+                initial_args={"ContentType": "application/json", "Accept": "application/json"},
+            )
+
+        else:
+            predictor = sagemaker.Predictor(
+                endpoint_name=endpoint_name,
+                sagemaker_session=self.session,
+                serializer=sagemaker.serializers.JSONSerializer(),
+                # deserializer=sagemaker.deserializers.JSONDeserializer()
+            )
+            predictor.content_type = "application/json"
+            predictor.accept = "application/json"
+            response = predictor.predict({"instances": query_words})
+            # print(response)
+        return json.loads(response)
+        
     def close(self, exit_code, endpoint_name=None):
         """
         delete endpoint and close s3_client, s3_resource, session
