@@ -1,5 +1,4 @@
 import os, re
-from bento.common.utils import get_logger
 from common.constants import MODELS_DEFINITION_FILE, LIST_DELIMITER_PROP
 from common.utils import download_file_to_dict, get_exception_msg
 
