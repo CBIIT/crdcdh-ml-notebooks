@@ -1,36 +1,37 @@
 import os, sys
 import glob
 import sagemaker
-import boto3
 import json
 import yaml
-
+from botocore.exceptions import ClientError
 import sagemaker.deserializers
 import sagemaker.serializers
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.metrics.pairwise import cosine_similarity
-from bento.common.s3 import S3Bucket
-from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs
+from common.s3 import S3Bucket
+from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs, get_local_session
 import common.sagemaker_config as config
-from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text
+from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session, dump_dict_to_json
 from common.visualize_word_vecs import plot_word_vecs_tsne
 from common.transform_json import transform_json_to_training_data
+from common.permissive_value_factory import DataModelFactory
 import numpy as np
 
 class SemanticAnalysis:
-    def __init__(self):
+    def __init__(self, is_local = False):
         """
         constructor of SemanticAnalysis
         """
         create_local_output_dirs(["../output", "../output/model", "../data", "../data/raw", "../data/raw/json","../temp"]) # create local directories if not exist.
         self.endpoint_name = None
-        self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET)
+        self.boto3_session = get_boto3_session(config.AWS_SAGEMAKER_USER)
+        self.S3Bucket = S3Bucket(config.CRDCDH_S3_BUCKET, self.boto3_session)
         self.timestamp = get_date_time()
         self.data_time = get_date_time("%Y-%m-%d-%H-%M-%S")
-        self.session = get_sagemaker_session(config.AWS_SAGEMAKER_USER, config.RUN_LOCAL)
-        self.role = get_sagemaker_execute_role(self.session)
-        # print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
-        self.region_name = boto3.Session().region_name
+        self.session = get_sagemaker_session(self.boto3_session, config.RUN_LOCAL) if not is_local else get_local_session()
+        self.role = get_sagemaker_execute_role(self.session) if not is_local else config.SAGEMAKER_EXECUTE_ROLE
+        print(self.role)  # This is the role that SageMaker would use to leverage AWS resources (S3, CloudWatch) on your behalf
+        self.region_name = self.boto3_session.region_name
         self.output_bucket = config.CRDCDH_S3_BUCKET
         self.raw_data_prefix = config.RAW_DATA_PREFIX
         self.train_data_prefix = config.TRAIN_DATA_PREFIX + self.timestamp
@@ -45,6 +46,7 @@ class SemanticAnalysis:
         self.bt_endpoint = None
         self.trained_model_vectors_path = "../output/model/vectors.txt"
         self.trained_model_vectors = None
+        self.is_local = is_local
 
     def get_s3_bucket(self):
         """
@@ -62,7 +64,8 @@ class SemanticAnalysis:
         if version is None:
             version = config.CONTAINER_IMAGE_VERSION
         try:   
-            self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version)
+            self.container = sagemaker.amazon.amazon_estimator.get_image_uri(self.region_name, image_name, version) if not self.is_local else \
+                sagemaker.image_uris.retrieve("blazingtext", self.region_name, "latest")
             print(f"Using SageMaker BlazingText container: {self.container} ({self.region_name})")
         except Exception as e:
             print("Failed to download container, please contact admin.")
@@ -94,7 +97,7 @@ class SemanticAnalysis:
 
             local_raw_data_folder_path = os.path.join(local_raw_data_folder, f"{self.image_name}-{self.data_time}/")
             local_train_data_folder_path = os.path.join(local_train_data_folder, f"{self.image_name}-{self.data_time}/")
-            transform_json_to_training_data(s3_raw_data_prefix, local_raw_data_folder_path, s3_training_data_file_key, local_train_data_folder_path)
+            transform_json_to_training_data(s3_raw_data_prefix, local_raw_data_folder_path, s3_training_data_file_key, local_train_data_folder_path, self.boto3_session)
             return s3_training_data_file_key
         except Exception as e:
             print(f"Failed to transform data, please contact admin, {e}")
@@ -140,7 +143,18 @@ class SemanticAnalysis:
             input_mode="File",
             output_path=self.s3_output_location,
             sagemaker_session=self.session
+        ) if not self.is_local else \
+           sagemaker.estimator.Estimator(
+            self.container,
+            self.role, 
+            instance_count=1,
+            instance_type='local', 
+            input_mode= 'File',
+            output_path=self.s3_output_location,
+            sagemaker_session=self.session,
+            # image_uri="811284229777.dkr.ecr.us-east-1.amazonaws.com/blazingtext:latest"
         )
+            
         if algorithm == "FastText":
             self.bt_model.set_hyperparameters(
                 mode= 'skipgram',
@@ -188,7 +202,10 @@ class SemanticAnalysis:
             self.close(1)
         try:
             self.bt_model.fit(inputs=self.data_channels, logs=True)
+        except ClientError as ce: 
+            print(ce)
         except Exception as e:
+            print(e)
             print("Failed to train model, please contact admin.")
             self.close(1)
 
@@ -197,10 +214,9 @@ class SemanticAnalysis:
         download trained model from s3
         """
         try:
-            self.s3_resource = boto3.resource("s3")
             key = self.bt_model.model_data[self.bt_model.model_data.find("/", 5) + 1 :]
             print(key)
-            self.s3_resource.Bucket(self.output_bucket).download_file(key, local_model_file)
+            self.S3Bucket.download_file(key, local_model_file)
         except Exception as e:
             print("Failed to download trained model, please contact admin.")
             self.close(1)
@@ -241,7 +257,9 @@ class SemanticAnalysis:
                     instance_type=config.HOSTING_INSTANCE_TYPE,
                     endpoint_name=self.endpoint_name,
                 )
-                    
+        except ClientError as ce: 
+            delete_endpoint(self.endpoint_name, self.boto3_session)  
+            self.deploy_trained_model(endpoint_name, trained_model_key)
         except Exception as e:
             print("Failed to deploy model vectors, please contact admin.")
             print(e)
@@ -421,11 +439,11 @@ class SemanticAnalysis:
             permissive_val_index = 0
             similarities = {}
             for item in permissive_vectors:
-                print(item["word"], item["vector"])
+                # print(item["word"], item["vector"])
                 similarity = cosine_similarity([query_vec], [item["vector"]])[0][0]
                 if query_word == item["word"]:
-                    print(f"Similarity between {word} and {query_word}: {similarity:.4f}")
-                    print(item["vector"])
+                    print(f"The same word (lowercase) found: {word}, {similarity:.4f}")
+                    # print(item["vector"])
                     similar_word.append(permissive_values[permissive_val_index])
                     return similar_word
                 else:
@@ -433,18 +451,102 @@ class SemanticAnalysis:
                 permissive_val_index += 1
             # Sort words by similarity and get top_k words
             similar_word = sorted(similarities.items(), key=lambda item: item[1], reverse=True)[:top_k]
-            print(similar_word)
+            similar_word = [item for item in similar_word if item[1] > 0.5]
+            # print(similar_word)
             return similar_word
         except Exception as e:
             print(e)
             self.close(1)
 
+    def generate_permissive_value_vectors(self, endpoint_name):
+        """
+        generate permissive value vectors for a given word
+        """
+        permissive_value_vectors = None
+        properties = None
+        data_model_factory = DataModelFactory(config.DATA_MODEL_LOCATION, f'{config.TIER}{2}')
+        data_model_props = data_model_factory.models
+        if not data_model_props or len(data_model_props.items()) == 0:
+            print("No data model properties found.")
+            self.close(1)
+        data_model_props_vectors = {}
+        try:
+            
+            for key, val in data_model_props.items():
+                # print(key, val)
+                properties = {}
+                if not val or not isinstance(val, dict):
+                    continue
+                for prop_name, words in val.items():
+                    # print(prop_name, words)
+                    if not words or not isinstance(words, list):
+                        continue
+
+                    permissive_value_vectors = {}
+                    word_vectors = self.get_word_vectors(words, endpoint_name)
+                    if not word_vectors or len(word_vectors) == 0:
+                        continue
+                    for item in word_vectors:
+                        if not item["word"] or not item["vector"]:
+                            continue
+                        print(item["word"], item["vector"])
+                        word = [word for word in words if str.strip(word.lower()) == item["word"].lower()]
+                        word = word[0] if word else None
+                        if not word:
+                            print(f"No word found for {item['word']}.")
+                            continue
+
+                        permissive_value_vectors[word] = item["vector"]
+
+                    properties[prop_name] = permissive_value_vectors
+
+                data_model_props_vectors[key] = properties 
+                permissive_value_vectors_local_path = "../output/crdcdh-permissive-values.json"
+                dump_dict_to_json(data_model_props_vectors, "../output/crdcdh-permissive-values.json")
+                permissive_value_vectors_key= os.path.join(self.output_prefix, "crdcdh-permissive-values.json")
+                self.S3Bucket.upload_file(permissive_value_vectors_key, permissive_value_vectors_local_path) 
+                print(f"Uploaded permissive value vectors to {permissive_value_vectors_key}")  
+        except ClientError as ce:
+            print("Failed to uploaded generate permissive value vectors to s3 bucket.")
+            print(ce)
+            self.close(1)          
+        except Exception as e:
+            print("Failed to generate permissive value vectors")
+            print(e)
+            self.close(1)  
+
+    def get_word_vectors(self, words, endpoint_name):
+        """
+        get word vectors for a list of words
+        """
+        response = None
+        query_words = [str.strip(word.lower())for word in words if word]
+        # print(query_words)
+        if not endpoint_name and self.bt_endpoint:
+            response = self.bt_endpoint.predict(
+                json.dumps({"instances": query_words}),
+                initial_args={"ContentType": "application/json", "Accept": "application/json"},
+            )
+
+        else:
+            predictor = sagemaker.Predictor(
+                endpoint_name=endpoint_name,
+                sagemaker_session=self.session,
+                serializer=sagemaker.serializers.JSONSerializer(),
+                # deserializer=sagemaker.deserializers.JSONDeserializer()
+            )
+            predictor.content_type = "application/json"
+            predictor.accept = "application/json"
+            response = predictor.predict({"instances": query_words})
+            # print(response)
+        return json.loads(response)
+        
     def close(self, exit_code, endpoint_name=None):
         """
         delete endpoint and close s3_client, s3_resource, session
         """
         if endpoint_name:
-            delete_endpoint(endpoint_name)
+            delete_endpoint(endpoint_name, self.boto3_session)
         if self.bt_model:
             self.bt_model = None
         if self.S3Bucket:

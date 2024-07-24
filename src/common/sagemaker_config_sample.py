@@ -34,5 +34,8 @@ SOLUTION_PREFIX = "crdcdh-ml"
 TAG_KEY = SOLUTION_PREFIX + "-" + TIER
 ENDPOINT_NAME = TAG_KEY + "-endpoint"
 
+AWS_SAGEMAKER_USER = "crdc-dh-sagemaker-user"
+RUN_LOCAL = True
+
 # execute-role for sagemaker in FNL for local development only
 SAGEMAKER_EXECUTE_ROLE = ""
