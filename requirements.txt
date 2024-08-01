@@ -7,3 +7,10 @@ sagemaker
 ipywidgets 
 datasets 
 seqeval
+imageio
+matplotlib
+PIL
+opencv-python-headless;
+opencv-python;
+spacy;
+xtarfile
