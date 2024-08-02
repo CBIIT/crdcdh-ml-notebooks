@@ -4,6 +4,8 @@ import os
 import json
 import re
 from common.sagemaker_config import CRDCDH_S3_BUCKET
+from nltk.corpus import stopwords
+import nltk
 
 def write_list_to_txt(input_list, file_path):
     if not os.path.exists(os.path.dirname(file_path)):
@@ -20,12 +22,17 @@ def search_evs_list(data, search_str):
 
 def clean_training_data(input_list):
     updated_input_list = []
+    nltk.download('stopwords')
+    stop_words = set(stopwords.words('english'))
     for item in input_list:
         text = re.sub(r'[^\w\s\']',' ', item)
         text = re.sub(r'[ \n]+', ' ', text)
         text = text.strip().lower()
+        tokens = text.lower().split()
+        filtered_tokens = [word for word in tokens if word not in stop_words]
+        filter_string = ' '.join(filtered_tokens)
+        updated_input_list.append(filter_string)
         #text = text+"\n"
-        updated_input_list.append(text)
     updated_input_list = list(set(updated_input_list))
     return updated_input_list
 
