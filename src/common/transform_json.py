@@ -3,8 +3,6 @@ import boto3
 import os
 import json
 import re
-from nltk.corpus import stopwords
-import nltk
 from common.sagemaker_config import CRDCDH_S3_BUCKET
 
 def write_list_to_txt(input_list, file_path):
@@ -22,17 +20,12 @@ def search_evs_list(data, search_str):
 
 def clean_training_data(input_list):
     updated_input_list = []
-    nltk.download('stopwords')
-    stop_words = set(stopwords.words('english'))
     for item in input_list:
         text = re.sub(r'[^\w\s\']',' ', item)
         text = re.sub(r'[ \n]+', ' ', text)
         text = text.strip().lower()
-        tokens = text.lower().split()
-        filtered_tokens = [word for word in tokens if word not in stop_words]
-        filter_string = ' '.join(filtered_tokens)
-        updated_input_list.append(filter_string)
         #text = text+"\n"
+        updated_input_list.append(text)
     updated_input_list = list(set(updated_input_list))
     return updated_input_list
 
@@ -173,12 +166,11 @@ def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
                 print(f'Downloaded {s3_file_key} to {local_file_path} successfully')
 
 
-def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_training_data_file_key, training_data_folder):
+def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_training_data_file_key, training_data_folder, session):
     NCIT = "ncit"
     GDC_PROPS = "gdc_props.json"
     GDC_VALUES = "gdc_values.json"
-    CDS_PROPS = ""
-    s3= boto3.client('s3')
+    s3= session.client('s3')
     try:
         download_from_S3(s3, raw_data_folder, s3_json_file_prefix)
         json_files = glob.glob('{}/*.json'.format(raw_data_folder))
