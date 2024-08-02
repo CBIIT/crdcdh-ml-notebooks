@@ -79,3 +79,13 @@ def get_exception_msg():
     ex_type, ex_value, exc_traceback = sys.exc_info()
     return f'{ex_type.__name__}: {ex_value}'
 
+"""
+Load yaml file to dict
+:param: yaml_file as str
+:return: dict
+"""
+def yaml2dict(yaml_file):
+    with open(yaml_file, 'r') as file:
+        data = yaml.load(file, Loader=yaml.FullLoader)
+    return data
+

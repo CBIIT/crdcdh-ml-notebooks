@@ -1,0 +1,7 @@
+rules:
+ dicom_tags: 
+    - tag: !!python/tuple [0x0010,0x0010]
+      name: Patient's Name
+    - tag: !!python/tuple [0x0010,0x0020]
+      name: Patient ID
+  

@@ -1,5 +1,6 @@
 import cv2
 import spacy
+import yaml
 
 def generate_clean_image(image, boxes, output_image_path):
     # image = cv2.imread(image_path)
@@ -81,3 +82,4 @@ def get_pii_boxes_nlp(response):
                 box = text['Geometry']['BoundingBox']
                 pii_boxes.append({"Text": detected_text, "Text Block": box})
     return pii_boxes
+

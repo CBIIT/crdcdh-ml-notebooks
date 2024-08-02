@@ -6,7 +6,7 @@ import json
 import yaml, boto3, io, cv2
 from botocore.exceptions import ClientError
 from common.s3 import S3Bucket
-from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session, dump_dict_to_json
+from common.utils import untar_file, pretty_print_json, get_date_time, preprocess_text, get_boto3_session, dump_dict_to_json, yaml2dict
 import numpy as np
 from common.sagemaker_utils import get_sagemaker_session, delete_endpoint, get_sagemaker_execute_role, create_local_output_dirs, get_local_session
 from imageio import imread
@@ -20,84 +20,8 @@ from pydicom.dataset import Dataset, FileDataset
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 from common.de_id_utils import get_pii_boxes_nlp, generate_clean_image
 
-phi_tags = [
-            (0x0010, 0x0010),  # Patient's Name
-            (0x0010, 0x0020),  # Patient ID
-            (0x0010, 0x0030),  # Patient's Birth Date
-            (0x0010, 0x0040),  # Patient's Sex
-            (0x0010, 0x1000),  # Other Patient IDs
-            (0x0010, 0x1001),  # Other Patient Names
-            (0x0010, 0x1010),  # Patient's Age
-            (0x0010, 0x1020),  # Patient's Size
-            (0x0010, 0x1030),  # Patient's Weight
-            (0x0010, 0x1090),  # Medical Record Locator
-            (0x0020, 0x000D),  # Study Instance UID
-            (0x0020, 0x0010),  # Study ID
-            (0x0008, 0x0020),  # Study Date
-            (0x0008, 0x0030),  # Study Time
-            (0x0008, 0x0090),  # Referring Physician's Name
-            (0x0008, 0x0050),  # Accession Number
-            (0x0008, 0x1030),  # Study Description
-            (0x0008, 0x1048),  # Physician(s) of Record
-            (0x0008, 0x1060),  # Name of Physician(s) Reading Study
-            (0x0020, 0x000E),  # Series Instance UID
-            (0x0020, 0x0011),  # Series Number
-            (0x0008, 0x0021),  # Series Date
-            (0x0008, 0x0031),  # Series Time
-            (0x0008, 0x103E),  # Series Description
-            (0x0008, 0x1070),  # Operator's Name
-            (0x0008, 0x0070),  # Manufacturer
-            (0x0008, 0x0080),  # Institution Name
-            (0x0008, 0x1010),  # Station Name
-            (0x0008, 0x1040),  # Institutional Department Name
-            (0x0008, 0x1090),  # Manufacturer's Model Name
-            (0x0018, 0x1000),  # Device Serial Number
-            (0x0018, 0x1016),  # Secondary Capture Device Manufacturer
-            (0x0018, 0x1018),  # Secondary Capture Device Manufacturer's Model Name
-            (0x0008, 0x0018),  # SOP Instance UID
-            (0x0020, 0x0052),  # Frame of Reference UID
-            (0x0020, 0x0200),  # Synchronization Frame of Reference UID
-            (0x0008, 0x0081),  # Institution Address
-            (0x0038, 0x0010),  # Admission ID
-            (0x0038, 0x0061),  # Discharge Diagnosis Description
-            (0x0038, 0x0300),  # Current Patient Location
-            (0x0040, 0x0001),  # Scheduled Station AE Title
-            (0x0040, 0x0002),  # Scheduled Procedure Step Start Date
-            (0x0040, 0x0003),  # Scheduled Procedure Step Start Time
-            (0x0040, 0x0006),  # Scheduled Performing Physician's Name
-            (0x0040, 0x0010),  # Scheduled Station Name
-            (0x0040, 0x1001),  # Requested Procedure ID
-            (0x0040, 0x1002),  # Reason for the Requested Procedure
-            (0x0040, 0x2001),  # Reason for the Imaging Service Request
-            (0x0008, 0x1084),  # Admitting Diagnoses Description
-            (0x0008, 0x1120),  # Referenced Patient Sequence
-            (0x0010, 0x21B0),  # Additional Patient History
-            (0x0038, 0x0040),  # Discharge Diagnosis Description
-            (0x0040, 0x0241),  # Performed Station AE Title
-            (0x0040, 0x0242),  # Performed Station Name
-            (0x0040, 0x0243),  # Performed Location
-            (0x0040, 0x0244),  # Performed Procedure Step Start Date
-            (0x0040, 0x0245),  # Performed Procedure Step Start Time
-            (0x0040, 0x0253),  # Performed Procedure Step ID
-            (0x0008, 0x002a),  # Acquisition DateTime
-            (0x0008, 0x0022),  # Acquisition Date
-            (0x0008, 0x0023),  # Content Date
-            (0x0008, 0x0033),  # Content Time 
-            (0x0008, 0x0024),  # Overlay Date
-            (0x0008, 0x0025),  # Curve Date 
-            (0x0008, 0x0026),  # Overlay Time
-            (0x0008, 0x0027),  # Curve Time
-            (0x0008, 0x0028),  # Acquisition Time
-            (0x0008, 0x0029),  # Acquisition Duration
-            (0x0008, 0x002b),  # Acquisition Number
-            (0x0008, 0x0016),  # SOP Class UID
-            (0x0088, 0x0140),  # Storage Media File-set UID
-            (0x0008, 0x0094),  # Referring Physician's Telephone Numbers
-            (0x0013, 0x1013),  # Name: Private tag data
-        ]
-
 class ProcessMedImage:
-    def __init__(self):
+    def __init__(self, rule_config_file_path= '../configs/de-id/de_id_rules.yaml'):
         """
         constructor of ProcessMedImage
         """
@@ -116,6 +40,15 @@ class ProcessMedImage:
         #Define the S3 bucket and object for the medical image we want to analyze.  Also define the color used for redaction.
         self.phi_detection_threshold = 0.00
         self.local_img_folder = "../images/med_phi_img/"
+        self.set_rules(rule_config_file_path)
+
+    def set_rules(self, rule_config_file_path):
+        self.rules = yaml2dict(rule_config_file_path)["rules"]
+        self.phi_tags = [ item["tag"] for item in self.rules['dicom_tags']]
+        print(self.phi_tags)
+        self.sensitive_words = self.rules['keywords']
+        print(self.sensitive_words)
+
 
     def upload_dicom_file(self, src_bucket, src_key, local_dicom_path):
         """
@@ -164,7 +97,7 @@ class ProcessMedImage:
         )
         all_ids = []
         if use_AI:
-            detected_texts = [text['DetectedText'] for text in response['TextDetections']]
+            detected_texts = [text for text in response['TextDetections']]
             for text in detected_texts:
                 ids = self.detect_id_in_text_AI(text, is_image=True)
                 if ids and len(ids) > 0:
@@ -173,17 +106,20 @@ class ProcessMedImage:
             all_ids = get_pii_boxes_nlp(response)
             return all_ids
 
-    def detect_id_in_text_AI(self, text, is_image = False):
+    def detect_id_in_text_AI(self, detected_text, is_image = False):
         # Step 4: Analyze text blocks for PHI using Comprehend Medical
         ids = []
-        if not text: return ids
+        if not detected_text: return ids
+        text = detected_text['DetectedText'] if is_image else detected_text
+             
         pii_entities = self.analyze_text_for_pii(text)
         if pii_entities and len(pii_entities) > 0:
             print(f"PII detected in text: '{text}'")
             for entity in pii_entities:
                 print(entity)
-                if is_image:  
-                    box = text['Geometry']['BoundingBox']
+                if is_image: 
+                    print(text) 
+                    box = detected_text['Geometry']['BoundingBox']
                     ids.append({"Text": text, "Text Block": box})
                 else:
                     ids.append(text)
@@ -194,7 +130,7 @@ class ProcessMedImage:
                 for entity in phi_entities:
                     print(f"Entity: {entity['Text']} - Type: {entity['Type']} - Confidence: {entity['Score']}")
                     if is_image:  
-                        box = text['Geometry']['BoundingBox']
+                        box = detected_text['Geometry']['BoundingBox']
                         ids.append({"Text": text, "Text Block": box})
                     else:
                         ids.append(text)
@@ -233,7 +169,7 @@ class ProcessMedImage:
             if isinstance(elem.value, str):
                 ids = self.detect_id_in_text_AI(elem.value, is_image=False)
                 if ids and len(ids) > 0:
-                    print(f"Tag: {elem.tag} - Name: {elem.name} - Value: {elem.value}")
+                    print(f"Tag: {elem}")
                     all_ids.extend(ids)
             elif isinstance(elem.value, list):
                 for item in elem.value:
@@ -244,12 +180,12 @@ class ProcessMedImage:
                             ids = self.detect_id_in_text_AI(value, is_image=False)
                             all_ids.extend(ids)
                             if ids and len(ids) > 0:
-                                print(f"Tag: {elem.tag} - Name: {elem.name} - Value: {elem.value}")
+                                print(f"Tag: {elem}")
                     else:
                         ids = self.detect_id_in_text_AI(item, is_image=False)
                         all_ids.extend(ids)
                         if ids and len(ids) > 0:
-                            print(f"Tag: {elem.tag} - Name: {elem.name} - Value: {elem.value}")
+                            print(f"Tag: {elem}")
         return tags, all_ids
     
     def convert_back_dicom(self, redacted_img_path, ds, local_de_id_dicom_path):
@@ -283,20 +219,20 @@ class ProcessMedImage:
         print(f"DICOM file has been created and saved to {local_de_id_dicom_path}.")
 
 
-    def generate_anonymous_value(self, tag):
-        """Generate an anonymous value based on the tag."""
-        # if tag == (0x0020, 0x000D):  # Study Instance UID
-        #     return generate_uid()
-        # elif tag == (0x0020, 0x000E):  # Series Instance UID
-        #     return generate_uid()
-        # elif tag == (0x0008, 0x0018):  # SOP Instance UID
-        #     return generate_uid()
-        # elif tag == (0x0020, 0x0052):  # Frame of Reference UID
-        #     return generate_uid()
-        # elif tag == (0x0020, 0x0200):  # Synchronization Frame of Reference UID
-        #     return generate_uid()
-        # else:
-        return None
+    # def generate_anonymous_value(self, tag):
+    #     """Generate an anonymous value based on the tag."""
+    #     # if tag == (0x0020, 0x000D):  # Study Instance UID
+    #     #     return generate_uid()
+    #     # elif tag == (0x0020, 0x000E):  # Series Instance UID
+    #     #     return generate_uid()
+    #     # elif tag == (0x0008, 0x0018):  # SOP Instance UID
+    #     #     return generate_uid()
+    #     # elif tag == (0x0020, 0x0052):  # Frame of Reference UID
+    #     #     return generate_uid()
+    #     # elif tag == (0x0020, 0x0200):  # Synchronization Frame of Reference UID
+    #     #     return generate_uid()
+    #     # else:
+    #     return None
 
     def redact_tag_value(self, name, value, tag):
         """Function to replace sensitive data with placeholders or anonymous values."""
@@ -306,14 +242,14 @@ class ProcessMedImage:
             return 'Dr.^Physician'
         elif tag == (0x0008, 0x1070):  # Operator's Name
             return 'Mr.^Operator'
-        elif isinstance(value, bool):
-            return None
-        elif isinstance(value, str):
-            return self.generate_anonymous_value(tag) if 'UID' in name else None
-        elif isinstance(value, (int, float)):
-            return None
-        elif isinstance(value, (datetime)):
-            return None
+        # elif isinstance(value, bool):
+        #     return None
+        # elif isinstance(value, str):
+        #     return None
+        # elif isinstance(value, (int, float)):
+        #     return None
+        # elif isinstance(value, (datetime)):
+        #     return None
         elif isinstance(value, list):
             return [None for _ in value]
         else:
@@ -324,18 +260,22 @@ class ProcessMedImage:
         # Redact PHI in the DICOM dataset
         redacted_value = None
         #  redact date and UID tags
+        detected_tags = []
         for item in ds:
             name = item.name
-            if "Date" in name or "Time" in name or "UID" in name or "Address" in name or "Telephone" in name or "Fax" in name:
-                redacted_value = None
-                print(f"Tag: {item.tag} - {name} - Value: {item.value} - Redacted Value: {redacted_value}")
-                item.value = redacted_value
-        for tag in phi_tags:
-            if tag in ds:
+            for key in self.sensitive_words:
+                if key in name:
+                    redacted_value = self.redact_tag_value(name, item.value, item.tag)
+                    # print(f"Tag: {item.tag} - {name} - Value: {item.value} - Redacted Value: {redacted_value}")
+                    print(f"Tag: {item} - Redacted Value: {redacted_value}")
+                    item.value = redacted_value
+                    detected_tags.append(item.tag)
+        for tag in self.phi_tags:
+            if tag in ds and not tag in detected_tags:
                 name = ds[tag].name
-                if "Date" in name or "Time" in name or "UID" in name or "Address" in name or " Numbers" in name: pass
-                redacted_value = self.redact_tag_value(name, ds[tag].value, tag)
-                print(f"Tag: {tag} - {ds[tag].name} - Value: {ds[tag].value} - Redacted Value: {redacted_value}")
+                ds_tag = ds[tag]
+                redacted_value = self.redact_tag_value(name, ds[tag].value, ds_tag)
+                print(f"Tag: {ds_tag} - Redacted Value: {redacted_value}")
                 ds[tag].value = redacted_value
 
         print(f"Redacted DICOM matadata")
