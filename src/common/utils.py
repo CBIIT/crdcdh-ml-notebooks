@@ -79,13 +79,45 @@ def get_exception_msg():
     ex_type, ex_value, exc_traceback = sys.exc_info()
     return f'{ex_type.__name__}: {ex_value}'
 
+
 """
 Load yaml file to dict
 :param: yaml_file as str
 :return: dict
 """
 def yaml2dict(yaml_file):
+    # Custom constructor to handle hexadecimal values
+    def hex_constructor(loader, node):
+        value = loader.construct_sequence(node, deep=True)
+        # Convert each value in the list to integer
+        return (int(x, 16) for x in value)
+    # Register the custom constructor for sequences
+    yaml.add_constructor('tag:yaml.org,2002:seq', hex_constructor)
     with open(yaml_file, 'r') as file:
-        data = yaml.load(file, Loader=yaml.FullLoader)
+        data = yaml.safe_load(file)
     return data
 
+class HexInt(int):
+    """A class to represent an integer in hexadecimal format in YAML."""
+    def __str__(self):
+        return f"0x{self:X}"
+
+def convert_tuple_to_hex(data):
+    """Convert a tuple of integers to a list of HexInt."""
+    return [HexInt(item) for item in data]
+
+def process_dict_tags(list, key):
+    """Process the dictionary to convert tuples to hex format."""
+    for entry in list:
+        if key in entry:
+            entry[key] = convert_tuple_to_hex(entry[key])
+    return list
+
+def hex_int_representer(dumper, data):
+        """Represent HexInt as a scalar in YAML."""
+        return dumper.represent_scalar('tag:yaml.org,2002:int', str(data))
+
+def dict2yaml(dict, file_path):
+    yaml.add_representer(HexInt, hex_int_representer)
+    with open(file_path, 'w') as file:
+            yaml.dump(dict, file, default_flow_style=False)
