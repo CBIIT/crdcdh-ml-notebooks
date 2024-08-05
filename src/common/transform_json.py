@@ -1,11 +1,26 @@
 import glob
 import boto3
 import os
+import yaml
 import json
 import re
 from common.sagemaker_config import CRDCDH_S3_BUCKET
 from nltk.corpus import stopwords
 import nltk
+
+def extract_transform_model_data(model_props_data):
+    model_training_data = []
+    for prop in model_props_data["PropDefinitions"].keys():
+        if "Desc" in model_props_data["PropDefinitions"][prop].keys():
+            model_training_data.append(prop + " " + model_props_data["PropDefinitions"][prop]["Desc"])
+        else:
+            model_training_data.append(prop)
+        if "Enum" in model_props_data["PropDefinitions"][prop].keys():
+            if isinstance(model_props_data["PropDefinitions"][prop]["Enum"], list) and len(model_props_data["PropDefinitions"][prop]["Enum"]) > 0:
+                for enum in model_props_data["PropDefinitions"][prop]["Enum"]:
+                    model_training_data.append(enum)
+
+    return model_training_data
 
 def write_list_to_txt(input_list, file_path):
     if not os.path.exists(os.path.dirname(file_path)):
@@ -158,6 +173,7 @@ def generate_training_data(defnition_list, training_set, definitions, definition
                 else:
                     training_set.append(syn[termName].lower())
     return training_set
+
             
 
 def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
@@ -167,7 +183,7 @@ def download_from_S3(s3, raw_data_folder, s3_json_file_prefix):
             os.makedirs(raw_data_folder)
         for obj in response['Contents']:
             s3_file_key = obj['Key']
-            if s3_file_key.endswith('.json'):
+            if s3_file_key.endswith('.json') or s3_file_key.endswith('.yaml') or s3_file_key.endswith('.yml'):
                 local_file_path = os.path.join(raw_data_folder, os.path.basename(s3_file_key))
                 s3.download_file(CRDCDH_S3_BUCKET, s3_file_key, local_file_path)
                 print(f'Downloaded {s3_file_key} to {local_file_path} successfully')
@@ -181,6 +197,9 @@ def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_tra
     try:
         download_from_S3(s3, raw_data_folder, s3_json_file_prefix)
         json_files = glob.glob('{}/*.json'.format(raw_data_folder))
+        yaml_files = glob.glob('{}/*.yaml'.format(raw_data_folder))
+        yml_files = glob.glob('{}/*.yml'.format(raw_data_folder))
+        yaml_files.extend(yml_files)
         ncit_files = [n for n in json_files if NCIT in n]
         ncit_file = ncit_files[0]
         with open(ncit_file, 'r') as file:
@@ -202,7 +221,11 @@ def transform_json_to_training_data(s3_json_file_prefix, raw_data_folder, s3_tra
                 gdc_training_data = extract_transform_gdc_data(gdc_props_data, gdc_values_data, ncit_data)
                 if len(gdc_training_data) > 0:
                     training_data_list.extend(gdc_training_data)
-
+        for yaml_file in yaml_files:
+            with open(yaml_file, 'r') as file:
+                model_props_data = yaml.safe_load(file)
+            model_training_data = extract_transform_model_data(model_props_data)
+            training_data_list.extend(model_training_data)
         training_data_list = clean_training_data(training_data_list)
         output_file_path = os.path.join(training_data_folder, os.path.basename(s3_training_data_file_key))
         write_list_to_txt(training_data_list, output_file_path)
