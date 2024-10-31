@@ -7,3 +7,4 @@ sagemaker
 ipywidgets 
 datasets 
 seqeval
+requests
