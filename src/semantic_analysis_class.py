@@ -162,7 +162,7 @@ class SemanticAnalysis:
                 min_count=5,
                 sampling_threshold=0.0001,
                 learning_rate=0.05,
-                window_size=5,
+                window_size=15, #window_size=5,
                 vector_dim=100,
                 negative_samples=5,
                 batch_size=11,  #  = (2*window_size + 1) (Preferred. Used only if mode is batch_skipgram)

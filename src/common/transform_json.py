@@ -22,67 +22,70 @@ def search_evs_list(data, search_str):
         if search_str in item.keys():
             return item[search_str]
 
-def find_ncit_code(data, ncit_key):
-    values = []
-    
-    def search_dict(d):
-        if isinstance(d, dict):
-            for key, value in d.items():
-                if key == ncit_key:
-                    values.append(value)
-                elif isinstance(value, dict):
-                    search_dict(value)
-                elif isinstance(value, list):
-                    for item in value:
-                        search_dict(item)
-    
-    search_dict(data)
-    return values
+def find_ncit_code(value_list ,data, ncit_key):
+    if isinstance(data, str):
+        if key == ncit_key:
+            value_list.append(value)
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == ncit_key:
+                value_list.append(value)
+            elif isinstance(value, dict):
+                value_list = find_ncit_code(value_list, value, ncit_key)
+            elif isinstance(value, list):
+                for item in value:
+                    value_list = find_ncit_code(value_list, item, ncit_key)
+    return value_list
+
+def api_call(url, header = None):
+    if header is not None:
+        response = requests.get(url, headers=header)
+    else:
+        response = requests.get(url)
+    return response
 
 def extract_transform_model_cde_data(props):
     mongo_list = []
     for prop in props["PropDefinitions"].keys():
         try:
             terms = props["PropDefinitions"][prop].get("Term")
-            prop_defination = props["PropDefinitions"][prop]["Desc"]
-            mongo_list.append(f'{prop} is {prop_defination}')
+            prop_defination = props["PropDefinitions"][prop].get("Desc")
+            if prop_defination is not None:
+                mongo_list.append(f'{prop} is {prop_defination}')
             if terms is None:
                 continue
-            else:
-                cde_code = terms[0].get("Code")
-                if cde_code is None:
-                    continue
-                cde_url = "https://cadsrapi.cancer.gov/rad/NCIAPI/1.0/api/DataElement/" + cde_code
-                cde_header = {"accept": "application/json"}
-                response = requests.get(cde_url, headers=cde_header)
-                if response.status_code != 200:
-                    continue
-                data = json.loads(response.content)
-                data_element_definition = data.get("DataElement",{}).get("definition")
-                if data_element_definition is None:
-                    continue
-                else:
-                    mongo_list.append(f'{prop} is {data_element_definition}')
-                ncit_codes = find_ncit_code(data, "conceptCode")
-                if len(ncit_codes) > 0:
-                    for ncit_code in ncit_codes:
-                        ncit_url= "https://api-evsrest.nci.nih.gov/api/v1/concept/ncit/" + ncit_code
-                        ncit_response = requests.get(ncit_url)
-                        if ncit_response.status_code != 200:
-                            continue
-                        else:
-                            ncit_data_string = ncit_response.content.decode('utf-8')
-                            ncit_data = json.loads(ncit_data_string)
-                            synonyms_list = ncit_data.get("synonyms")
-                            defin_list = ncit_data.get("definitions")
-                            if defin_list is not None:
-                                if synonyms_list is not None:
-                                    for synonym in synonyms_list:
-                                        s = synonym["name"]
-                                        #
-                                        for defin in defin_list:
-                                            definition = defin['definition']
-                                            mongo_list.append(f"{s} is {definition}")
+            cde_code = terms[0].get("Code")
+            if cde_code is None:
+                continue
+            cde_url = "https://cadsrapi.cancer.gov/rad/NCIAPI/1.0/api/DataElement/" + cde_code
+            cde_header = {"accept": "application/json"}
+            response = api_call(cde_url, cde_header)
+            if response.status_code != 200:
+                continue
+            data = json.loads(response.content)
+            data_element_definition = data.get("DataElement",{}).get("definition")
+            if data_element_definition is None:
+                continue
+            mongo_list.append(f'{prop} is {data_element_definition}')
+            ncit_codes = find_ncit_code([], data, "conceptCode")
+            if len(ncit_codes) > 0:
+                for ncit_code in ncit_codes:
+                    ncit_url= "https://api-evsrest.nci.nih.gov/api/v1/concept/ncit/" + ncit_code
+                    ncit_response = api_call(ncit_url)
+                    if ncit_response.status_code != 200:
+                        continue
+                    ncit_data_string = ncit_response.content.decode('utf-8')
+                    ncit_data = json.loads(ncit_data_string)
+                    synonyms_list = ncit_data.get("synonyms")
+                    defin_list = ncit_data.get("definitions")
+                    if defin_list is not None:
+                        if synonyms_list is not None:
+                            for synonym in synonyms_list:
+                                s = synonym["name"]
+                                #
+                                for defin in defin_list:
+                                    definition = defin['definition']
+                                    mongo_list.append(f"{s} is {definition}")
         except Exception as e:
             print(f"{prop}:{e}")
     return mongo_list
